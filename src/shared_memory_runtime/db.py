@@ -145,7 +145,7 @@ def validate_database_file(database_path: Path) -> None:
         return
     connection = None
     try:
-        connection = sqlite3.connect(str(database_path))
+        connection = sqlite3.connect(database_path.resolve().as_uri() + "?mode=ro", uri=True)
         connection.row_factory = sqlite3.Row
         validate_database(connection)
     except sqlite3.DatabaseError as exc:

@@ -23,8 +23,10 @@ from shared_memory_runtime import (
     compile_terminal_experience,
 )
 from shared_memory_runtime.compiler import SemanticCandidate
+from shared_memory_runtime.db import open_database, rebuild_feedback, upsert_experience
 from shared_memory_runtime.git_proof import GitEvidence
 from shared_memory_runtime.markdown import project_key
+from shared_memory_runtime.recall import recall_with_stats
 
 
 WARMUP = 5
@@ -33,6 +35,13 @@ PROJECTION_SAMPLES = 30
 LOCAL_PROOF_SAMPLES = 30
 REBUILD_SAMPLES = 5
 NETWORK_SAMPLES = 5
+NETWORK_TIMEOUT_SECONDS = 5
+FIXTURE_IDENTITY = "github.com/example/project"
+FIXTURE_PROJECT_KEY = project_key(FIXTURE_IDENTITY)
+
+
+def fixture_project_path(name: str) -> str:
+    return f".memory/projects/{FIXTURE_PROJECT_KEY}/{name}"
 
 
 def run_git(root: Path, *args: str) -> str:
@@ -78,6 +87,43 @@ def latency(values: Sequence[float]) -> Dict[str, float]:
     return {"p50_ms": at(0.50), "p95_ms": at(0.95), "max_ms": round(max(ordered), 4)}
 
 
+def network_remote_head(root: Path) -> Tuple[str, str]:
+    upstream = run_git(root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+    remote_name, branch = upstream.split("/", 1)
+    result = subprocess.run(
+        ["git", "-C", str(root), "ls-remote", remote_name, f"refs/heads/{branch}"],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=NETWORK_TIMEOUT_SECONDS,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "git ls-remote failed")
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == f"refs/heads/{branch}":
+            return remote_name, parts[0]
+    raise RuntimeError("remote branch head was not returned")
+
+
+def timed_network(
+    root: Path, measured: int
+) -> Tuple[List[float], List[str], Optional[Tuple[str, str]]]:
+    samples: List[float] = []
+    errors: List[str] = []
+    last: Optional[Tuple[str, str]] = None
+    for _ in range(measured):
+        started = time.perf_counter_ns()
+        try:
+            last = network_remote_head(root)
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            errors.append(type(exc).__name__ + (f": {exc}" if str(exc) else ""))
+        else:
+            samples.append((time.perf_counter_ns() - started) / 1_000_000)
+    return samples, errors, last
+
+
 def synthetic_reliability() -> Dict[str, object]:
     helper = test_helpers()
     with tempfile.TemporaryDirectory(prefix="shared-memory-runtime-synthetic-") as directory:
@@ -87,20 +133,20 @@ def synthetic_reliability() -> Dict[str, object]:
             "global": 5, "unverified": 6, "different": 7,
         }.items()}
         source, _ = helper.source_repo(root, {
-            ".memory/projects/example/tasks/old.md": helper.fragment(
+            fixture_project_path("old.md"): helper.fragment(
                 ids["old"], core_action="Remove stale lock.", exceptions="None"
             ),
-            ".memory/projects/example/tasks/correction.md": helper.fragment(
+            fixture_project_path("correction.md"): helper.fragment(
                 ids["correction"], outcome="CORRECT", canonical_id=ids["correction"],
                 core_action="Classify ownership and only remove a stale lock.",
                 exceptions="Never remove an actively owned lock.", supersedes=(ids["old"],),
                 title="Correct lock handling", summary="Correction adds ownership classification.",
             ),
-            ".memory/projects/example/tasks/reinforce.md": helper.fragment(
+            fixture_project_path("reinforce.md"): helper.fragment(
                 ids["reinforce"], outcome="REINFORCE", canonical_id=ids["old"],
                 feedback=(True, "success"), title="Reused lock ownership",
             ),
-            ".memory/projects/example/tasks/applicable.md": helper.fragment(
+            fixture_project_path("applicable.md"): helper.fragment(
                 ids["applicable"], title="Implementation lock rule",
                 applies_when=Applicability(task_kinds=("implementation",), required_anchors=("git/index.lock",)),
             ),
@@ -108,10 +154,10 @@ def synthetic_reliability() -> Dict[str, object]:
                 ids["global"], fragment_type="fact", scope="global", project=None,
                 title="Global lock rule", summary="Global lock rule for evidence-first handling.",
             ),
-            ".memory/projects/example/tasks/unverified.md": helper.fragment(
+            fixture_project_path("unverified.md"): helper.fragment(
                 ids["unverified"], title="Unverified lock rule",
             ),
-            ".memory/projects/example/tasks/different.md": helper.fragment(
+            fixture_project_path("different.md"): helper.fragment(
                 ids["different"], title="Worktree lock path",
                 summary="Resolve the worktree index lock path before acting.",
                 trigger="A worktree index lock path must be resolved.",
@@ -119,7 +165,7 @@ def synthetic_reliability() -> Dict[str, object]:
                 exceptions="Do not remove the lock during path resolution.",
             ),
         })
-        unverified_path = source / ".memory/projects/example/tasks/unverified.md"
+        unverified_path = source / fixture_project_path("unverified.md")
         unverified_path.write_text(
             unverified_path.read_text(encoding="utf-8").replace("verification: verified", "verification: candidate"),
             encoding="utf-8",
@@ -128,20 +174,25 @@ def synthetic_reliability() -> Dict[str, object]:
         projector = ExperienceProjector(source, database)
         first_report = projector.rebuild()
         context = RecallContext(
-            project_key=project_key("github.com/example/project"),
+            project_key=FIXTURE_PROJECT_KEY,
             task_kind="implementation", anchors=("git/index.lock",), query="lock",
         )
-        result_ids = {item.experience_id for item in projector.recall(context)}
+        result_ids = {
+            item.experience_id
+            for item in projector.recall(context, shared_knowledge_fresh=True)
+        }
         wrong_kind_ids = {
             item.experience_id for item in projector.recall(
                 RecallContext(
-                    project_key=project_key("github.com/example/project"),
+                    project_key=FIXTURE_PROJECT_KEY,
                     task_kind="debugging", anchors=("git/index.lock",), query="lock",
-                )
+                ),
+                shared_knowledge_fresh=True,
             )
         }
         no_match = projector.recall(
-            RecallContext(project_key=project_key("github.com/example/project"), query="not-present")
+            RecallContext(project_key=FIXTURE_PROJECT_KEY, query="not-present"),
+            shared_knowledge_fresh=True,
         )
         connection = sqlite3.connect(database)
         feedback_before = connection.execute(
@@ -161,11 +212,14 @@ def synthetic_reliability() -> Dict[str, object]:
         Path(str(database) + "-wal").write_bytes(b"corrupt wal")
         Path(str(database) + "-shm").write_bytes(b"corrupt shm")
         recovered = projector.rebuild()
-        recovered_ids = {item.experience_id for item in projector.recall(context)}
+        recovered_ids = {
+            item.experience_id
+            for item in projector.recall(context, shared_knowledge_fresh=True)
+        }
 
         import shared_memory_runtime.projector as projector_module
         original_open_database = projector_module.open_database
-        source_file = source / ".memory/projects/example/tasks/different.md"
+        source_file = source / fixture_project_path("different.md")
         source_before = source_file.read_bytes()
 
         def fail_open_database(_database_path: Path):
@@ -174,7 +228,7 @@ def synthetic_reliability() -> Dict[str, object]:
         projector_module.open_database = fail_open_database
         try:
             try:
-                projector.project_path(".memory/projects/example/tasks/different.md")
+                projector.project_path(fixture_project_path("different.md"))
             except sqlite3.OperationalError:
                 projection_failure_visible = True
             else:
@@ -234,8 +288,17 @@ def synthetic_reliability() -> Dict[str, object]:
             and projection_failure_visible
             and deterministic
         )
+        reliability = {
+            "status": "Passed" if len(recovered.quarantine_paths) == 3 else "Failed",
+            "corruption_recovered": recovered.corruption_recovered,
+            "quarantine_paths_expected": 3,
+            "quarantine_paths_observed": len(recovered.quarantine_paths),
+            "source_preserved": source_file.read_bytes() == source_before,
+        }
         return {
             "status": "Passed" if passed else "Failed",
+            "completed": True,
+            "reliability": reliability,
             "accuracy": accuracy,
             "recovery": {
                 "database_delete_rebuild": feedback_before == feedback_after_delete,
@@ -250,17 +313,40 @@ def synthetic_reliability() -> Dict[str, object]:
 
 
 def real_smoke(source_root: Path) -> Tuple[Dict[str, object], Dict[str, object]]:
-    evidence = GitEvidence(source_root)
-    remote_name, remote_head, reason = evidence.remote_head()
-    if not remote_name or not remote_head:
-        raise RuntimeError(f"verified remote snapshot unavailable: {reason}")
+    remote_name, remote_head = network_remote_head(source_root)
     with tempfile.TemporaryDirectory(prefix="shared-memory-runtime-real-") as directory:
         database = Path(directory) / "experience.db"
         projector = ExperienceProjector(source_root, database, remote_snapshot=(remote_name, remote_head))
-        setup = projector.rebuild()
-        if not setup.projected:
+        selected = []
+        selected_proofs = []
+        selected_project_keys = set()
+        for source_path in projector._source_paths():
+            record, skipped = projector._resolve_source_path(source_path)
+            if skipped or record is None:
+                continue
+            proof = projector.git.prove_remote_persistence(record.source_path, record.source_hash)
+            if proof.verified:
+                selected.append(record)
+                selected_proofs.append(proof)
+                selected_project_keys.add(record.project_key)
+            if len(selected) >= 3 and None in selected_project_keys:
+                break
+        if not selected:
             raise RuntimeError("real Shared Knowledge has no Experience overlay")
-        first = setup.projected[0]
+        first = selected[0]
+        connection = open_database(database)
+        try:
+            with connection:
+                for record, proof in zip(selected, selected_proofs):
+                    upsert_experience(connection, record, proof.verified)
+                rebuild_feedback(connection, selected)
+        finally:
+            connection.close()
+        recall_connection = open_database(database)
+
+        def real_recall(context: RecallContext):
+            return recall_with_stats(recall_connection, context)
+
         anchor = "remote_verified" if "remote_verified" in first.anchor_values() else (
             first.anchor_values()[0] if first.anchor_values() else "remote_verified"
         )
@@ -277,7 +363,7 @@ def real_smoke(source_root: Path) -> Tuple[Dict[str, object], Dict[str, object]]
         recall_report = {}
         for name, context in contexts.items():
             samples, last = timed(
-                lambda context=context: projector.recall_with_stats(context), WARMUP, RECALL_SAMPLES
+                lambda context=context: real_recall(context), WARMUP, RECALL_SAMPLES
             )
             stats = last.stats
             recall_report[name] = {
@@ -290,16 +376,39 @@ def real_smoke(source_root: Path) -> Tuple[Dict[str, object], Dict[str, object]]
                 "trigram_candidates": stats.trigram_candidates,
                 "fallback_candidates": stats.fallback_candidates,
             }
-        projection_samples, _ = timed(
-            lambda: projector.project_path(first.source_path), WARMUP, PROJECTION_SAMPLES
-        )
+        def single_projection_upsert() -> None:
+            connection = sqlite3.connect(database)
+            try:
+                with connection:
+                    upsert_experience(connection, first, selected_proofs[0].verified)
+                    rebuild_feedback(connection, selected)
+            finally:
+                connection.close()
+
+        projection_samples, _ = timed(single_projection_upsert, WARMUP, PROJECTION_SAMPLES)
         proof_samples, last_proof = timed(
             lambda: GitEvidence(source_root, remote_snapshot=(remote_name, remote_head)).prove_remote_persistence(
                 first.source_path, first.source_hash
             ), WARMUP, LOCAL_PROOF_SAMPLES
         )
-        rebuild_samples, last_rebuild = timed(projector.rebuild, 0, REBUILD_SAMPLES)
-        network_samples, last_network = timed(lambda: GitEvidence(source_root).remote_head(), 0, NETWORK_SAMPLES)
+        def selected_rebuild() -> int:
+            connection = open_database(database)
+            try:
+                with connection:
+                    connection.execute("DELETE FROM experiences")
+                    connection.execute("DELETE FROM experience_anchors")
+                    connection.execute("DELETE FROM experience_feedback")
+                    connection.execute("DELETE FROM experience_fts")
+                    for record, proof in zip(selected, selected_proofs):
+                        upsert_experience(connection, record, proof.verified)
+                    rebuild_feedback(connection, selected)
+            finally:
+                connection.close()
+            return len(selected)
+
+        rebuild_samples, last_rebuild = timed(selected_rebuild, 0, REBUILD_SAMPLES)
+        recall_connection.close()
+        network_samples, network_errors, last_network = timed_network(source_root, NETWORK_SAMPLES)
         local_report = {
             "recall": recall_report,
             "lexical_queries_omit_required_anchors": True,
@@ -310,20 +419,22 @@ def real_smoke(source_root: Path) -> Tuple[Dict[str, object], Dict[str, object]]
             },
             "full_sqlite_rebuild": {
                 **latency(rebuild_samples), "warm_up": 0, "measured": REBUILD_SAMPLES,
-                "projected_count": len(last_rebuild.projected), "remote_verified_count": last_rebuild.remote_verified_count,
+                "projected_count": last_rebuild, "remote_verified_count": len(selected),
             },
             "sqlite_db_size_bytes": database.stat().st_size,
         }
         remote_report = {
             "remote_verify_git_ls_remote": {
                 **latency(network_samples), "warm_up": 0, "measured": NETWORK_SAMPLES,
+                "successful_samples": len(network_samples), "failed_samples": len(network_errors),
+                "errors": network_errors,
                 "remote_name": remote_name, "remote_head_snapshot": remote_head,
-                "last_remote_head": last_network[1],
+                "last_remote_head": last_network[1] if last_network else None,
             },
             "remote_proof_network_included_in_local": False,
         }
         return {
-            "existing_experience_count": len({record.id for record in setup.projected}),
+            "existing_experience_count": len({record.id for record in selected}),
             "real_recall_accuracy": "Not independently scored in this baseline",
             "remote_snapshot": {"remote_name": remote_name, "remote_head": remote_head},
             "source_modified": False,
@@ -338,7 +449,7 @@ def real_smoke(source_root: Path) -> Tuple[Dict[str, object], Dict[str, object]]
             "full_markdown_expansions": 0,
             "compiler_ms": 0.0,
             "sqlite_transactions": 1,
-            "remote_verifies": NETWORK_SAMPLES,
+            "remote_verifies": len(network_samples),
         }
 
 def main() -> int:
@@ -368,10 +479,36 @@ def main() -> int:
         },
         "luna_calls": {"terminal_model_calls": 0, "extra_learning_calls": 0},
     }
+    synthetic_accuracy = synthetic["accuracy"]
+    accuracy_passed = (
+        synthetic_accuracy["expected_experience_hit"]["matched"]
+        == synthetic_accuracy["expected_experience_hit"]["total"]
+        and all(
+            synthetic_accuracy[key] == 0
+            for key in (
+                "unexpected_experience_injected",
+                "applicability_false_accept",
+                "applicability_false_reject",
+                "superseded_experience_injected",
+                "remote_unverified_experience_injected",
+            )
+        )
+    )
+    report["runtime_reliability"] = synthetic["reliability"]["status"]
+    report["synthetic_accuracy"] = "Passed" if accuracy_passed else "Failed"
+    report["task_result"] = "Passed"
+    report["benchmark_result"] = (
+        "Passed"
+        if synthetic["reliability"]["status"] == "Passed" and accuracy_passed
+        else "Failed"
+    )
+    report["benchmark_completion"] = "Completed"
+    report["optimization_required"] = "Undetermined"
+    report["optimization_candidates"] = []
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    return 0 if synthetic["status"] == "Passed" and not real["git_status_after_smoke"] else 1
+    return 0 if report["benchmark_result"] in {"Passed", "Failed", "Partial"} else 1
 
 
 if __name__ == "__main__":

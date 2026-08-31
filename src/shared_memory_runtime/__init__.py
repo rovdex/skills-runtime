@@ -7,7 +7,7 @@ from .compiler import (
 )
 from .models import Applicability, ExperienceRecord, FeedbackEvent
 from .metrics import TaskMetrics, metrics_path, record_task_metrics
-from .projector import ExperienceProjector, RebuildReport
+from .projector import ExperienceProjector, ProjectionFreshness, RebuildReport
 from .recall import RecallCandidate, RecallContext, RecallRun, RecallStats, estimate_capsule_tokens
 
 __all__ = [
@@ -17,6 +17,7 @@ __all__ = [
     "ExperienceProjector",
     "ExperienceRecord",
     "FeedbackEvent",
+    "ProjectionFreshness",
     "RecallRun",
     "RecallStats",
     "RecallCandidate",

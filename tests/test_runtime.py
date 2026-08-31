@@ -524,3 +524,25 @@ def test_recall_stats_and_local_only_metrics(tmp_path: Path) -> None:
         ),
         invalid_home,
     ) is False
+
+
+def test_projection_freshness_is_separate_from_runtime_compatibility(tmp_path: Path) -> None:
+    source, _ = source_repo(
+        tmp_path,
+        {".memory/projects/example/tasks/experience.md": fragment(make_id(63))},
+    )
+    database = tmp_path / "experience.db"
+    projector = ExperienceProjector(source, database)
+
+    assert projector.projection_freshness().reason_code == "projection_missing"
+    projector.rebuild()
+    assert projector.projection_freshness().ready is True
+
+    source_file = source / ".memory/projects/example/tasks/experience.md"
+    source_file.write_text(
+        source_file.read_text(encoding="utf-8").replace("Index lock ownership", "Changed lock ownership"),
+        encoding="utf-8",
+    )
+    freshness = projector.projection_freshness()
+    assert freshness.ready is False
+    assert freshness.reason_code == "projection_source_mismatch"

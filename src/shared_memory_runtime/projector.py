@@ -57,6 +57,15 @@ class RebuildReport:
         return sum(proof.verified for proof in self.proofs)
 
 
+@dataclass(frozen=True)
+class ProjectionFreshness:
+    """Read-only compatibility result for the local derived projection."""
+
+    ready: bool
+    reason_code: str
+    detail: str = ""
+
+
 class ExperienceProjector:
     """Project Experience-bearing Fragments from a Shared Knowledge checkout."""
 
@@ -109,6 +118,29 @@ class ExperienceProjector:
             return None, None, SkippedSource(relative, "invalid_experience", message)
         proof = self.git.prove_remote_persistence(record.source_path, record.source_hash)
         return record, proof, None
+
+    def _authoritative_records_without_remote_proof(self) -> Tuple[List[ExperienceRecord], Tuple[str, ...]]:
+        """Read current source hashes without doing network Remote Proof work."""
+
+        records: List[ExperienceRecord] = []
+        unusable_paths: List[str] = []
+        for path in self._source_paths():
+            relative = path.relative_to(self.source_root).as_posix()
+            raw_text = path.read_text(encoding="utf-8", errors="replace")
+            marker = raw_text.find("\n---\n", 4) if raw_text.startswith("---\n") else -1
+            if marker < 0 or not re.search(r"^experience:\s*$", raw_text[4:marker], re.MULTILINE):
+                continue
+            source_hash = self.git.tracked_source_hash(relative)
+            if not source_hash:
+                unusable_paths.append(relative)
+                continue
+            try:
+                record = parse_experience_fragment(path, self.source_root, source_hash)
+            except (FragmentValidationError, OSError, UnicodeError, ValueError):
+                unusable_paths.append(relative)
+                continue
+            records.append(record)
+        return records, tuple(sorted(unusable_paths))
 
     def _collect_projection(self) -> RebuildReport:
         report = RebuildReport()
@@ -311,6 +343,39 @@ class ExperienceProjector:
     def rebuild(self) -> RebuildReport:
         with self._database_lock:
             return self._rebuild_locked()
+
+    def projection_freshness(self) -> ProjectionFreshness:
+        """Check DB/source compatibility without creating DB or contacting a remote."""
+
+        with self._database_lock:
+            if not self.database_path.exists():
+                return ProjectionFreshness(False, "projection_missing")
+            try:
+                validate_database_file(self.database_path)
+                records, unusable_paths = self._authoritative_records_without_remote_proof()
+                if unusable_paths:
+                    return ProjectionFreshness(
+                        False,
+                        "authoritative_source_unusable",
+                        ", ".join(unusable_paths),
+                    )
+                connection = sqlite3.connect(str(self.database_path))
+                connection.row_factory = sqlite3.Row
+                try:
+                    actual = {
+                        (row["id"], row["source_path"], row["source_hash"])
+                        for row in connection.execute(
+                            "SELECT id, source_path, source_hash FROM experiences"
+                        )
+                    }
+                finally:
+                    connection.close()
+                expected = {(record.id, record.source_path, record.source_hash) for record in records}
+                if actual != expected:
+                    return ProjectionFreshness(False, "projection_source_mismatch")
+                return ProjectionFreshness(True, "fresh")
+            except (DatabaseCorruptionError, OSError, sqlite3.DatabaseError) as exc:
+                return ProjectionFreshness(False, "projection_invalid", str(exc))
 
     def project_path(self, source_path: str) -> RemoteProof:
         """Project one source after Remote Verify; failed proof remains ineligible."""

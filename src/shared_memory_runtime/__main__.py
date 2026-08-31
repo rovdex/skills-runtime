@@ -1,0 +1,58 @@
+"""Small explicit CLI for rebuild and bounded Recall."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from collections import Counter
+from pathlib import Path
+
+from .projector import ExperienceProjector
+from .recall import RecallContext
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Shared Memory Experience Runtime")
+    parser.add_argument("--source-root", type=Path, required=True)
+    parser.add_argument("--database", type=Path)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("rebuild")
+    recall_parser = subparsers.add_parser("recall")
+    recall_parser.add_argument("--project-key")
+    recall_parser.add_argument("--task-kind")
+    recall_parser.add_argument("--query", default="")
+    recall_parser.add_argument("--anchor", action="append", default=[])
+    recall_parser.add_argument("--task-class", choices=["normal", "complex", "debugging"], default="normal")
+    recall_parser.add_argument("--expand", action="store_true")
+    arguments = parser.parse_args()
+    projector = ExperienceProjector(arguments.source_root, arguments.database)
+    if arguments.command == "rebuild":
+        report = projector.rebuild()
+        print(
+            json.dumps(
+                {
+                    "projected": len(report.projected),
+                    "remote_verified": report.remote_verified_count,
+                    "skipped": len(report.skipped),
+                    "skip_reason_counts": Counter(item.reason_code for item in report.skipped),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
+    candidates = projector.recall(
+        RecallContext(
+            project_key=arguments.project_key,
+            task_kind=arguments.task_kind,
+            query=arguments.query,
+            anchors=tuple(arguments.anchor),
+            task_class=arguments.task_class,
+            expand=arguments.expand,
+        )
+    )
+    print(json.dumps([candidate.__dict__ for candidate in candidates], ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

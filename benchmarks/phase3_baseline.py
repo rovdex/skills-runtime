@@ -35,6 +35,16 @@ REBUILD_SAMPLES = 5
 NETWORK_SAMPLES = 5
 
 
+def run_git(root: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(root), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
 def test_helpers():
     path = Path(__file__).resolve().parents[1] / "tests" / "test_runtime.py"
     spec = importlib.util.spec_from_file_location("baseline_test_helpers", path)

@@ -26,7 +26,7 @@ from .db import (
     validate_database_file,
 )
 from .git_proof import GitEvidence, RemoteProof
-from .markdown import FragmentValidationError, parse_experience_fragment
+from .markdown import FragmentValidationError, parse_experience_fragment, parse_front_matter, project_key
 from .models import ExperienceRecord
 from .recall import RecallCandidate, RecallContext, RecallRun, recall_with_stats
 
@@ -42,6 +42,22 @@ class SkippedSource:
     source_path: str
     reason_code: str
     detail: str
+    experience_id: Optional[str] = None
+    scope: Optional[str] = None
+    canonical_project_key: Optional[str] = None
+    source_hash: Optional[str] = None
+    eligibility: str = "excluded"
+
+    def as_mapping(self) -> dict[str, Optional[str]]:
+        return {
+            "source_path": self.source_path,
+            "experience_id": self.experience_id,
+            "scope": self.scope,
+            "canonical_project_key": self.canonical_project_key,
+            "source_hash": self.source_hash,
+            "eligibility": self.eligibility,
+            "reason_code": self.reason_code,
+        }
 
 
 @dataclass
@@ -64,6 +80,7 @@ class ProjectionFreshness:
     ready: bool
     reason_code: str
     detail: str = ""
+    diagnostics: Tuple[SkippedSource, ...] = ()
 
 
 class ExperienceProjector:
@@ -94,15 +111,56 @@ class ExperienceProjector:
             paths.append(path)
         return sorted(paths)
 
-    def _parse_path(self, path: Path) -> Tuple[Optional[ExperienceRecord], Optional[RemoteProof], Optional[SkippedSource]]:
+    def _source_diagnostic(
+        self,
+        path: Path,
+        source_hash: Optional[str],
+        reason_code: str,
+        detail: str,
+    ) -> SkippedSource:
+        relative = path.relative_to(self.source_root).as_posix()
+        experience_id: Optional[str] = None
+        scope: Optional[str] = None
+        canonical_project_key: Optional[str] = None
+        try:
+            metadata, _ = parse_front_matter(path.read_text(encoding="utf-8", errors="replace"))
+        except (FragmentValidationError, OSError, UnicodeError, ValueError):
+            metadata = {}
+        raw_id = metadata.get("id")
+        if isinstance(raw_id, str) and raw_id.strip():
+            experience_id = raw_id.strip()
+        raw_scope = metadata.get("scope")
+        if isinstance(raw_scope, str) and raw_scope.strip():
+            scope = raw_scope.strip()
+        identity = metadata.get("project")
+        if scope == "project" and isinstance(identity, str) and identity.strip():
+            try:
+                canonical_project_key = project_key(identity)
+            except FragmentValidationError:
+                pass
+        return SkippedSource(
+            relative,
+            reason_code,
+            detail,
+            experience_id=experience_id,
+            scope=scope,
+            canonical_project_key=canonical_project_key,
+            source_hash=source_hash,
+        )
+
+    def _resolve_source_path(
+        self, path: Path
+    ) -> Tuple[Optional[ExperienceRecord], Optional[SkippedSource]]:
         relative = path.relative_to(self.source_root).as_posix()
         raw_text = path.read_text(encoding="utf-8", errors="replace")
         marker = raw_text.find("\n---\n", 4) if raw_text.startswith("---\n") else -1
         if marker < 0 or not re.search(r"^experience:\s*$", raw_text[4:marker], re.MULTILINE):
-            return None, None, None
+            return None, None
         source_hash = self.git.tracked_source_hash(relative)
         if not source_hash:
-            return None, None, SkippedSource(relative, "source_not_tracked", "source is not a tracked Git path")
+            return None, self._source_diagnostic(
+                path, None, "source_not_tracked", "source is not a tracked Git path"
+            )
         try:
             record = parse_experience_fragment(path, self.source_root, source_hash)
         except (FragmentValidationError, OSError, UnicodeError, ValueError) as exc:
@@ -114,69 +172,69 @@ class ExperienceProjector:
                 or ("invalid YAML front matter" in message and "\nexperience:" not in raw_text)
                 or ("requires task_id" in message and "\ntask_id:" not in raw_text)
             ):
-                return None, None, None
-            return None, None, SkippedSource(relative, "invalid_experience", message)
+                return None, None
+            reason_code = getattr(exc, "reason_code", None) or "invalid_experience"
+            return None, self._source_diagnostic(path, source_hash, reason_code, message)
+        return record, None
+
+    def _parse_path(self, path: Path) -> Tuple[Optional[ExperienceRecord], Optional[RemoteProof], Optional[SkippedSource]]:
+        record, skipped = self._resolve_source_path(path)
+        if skipped or record is None:
+            return None, None, skipped
         proof = self.git.prove_remote_persistence(record.source_path, record.source_hash)
         return record, proof, None
 
-    def _authoritative_records_without_remote_proof(self) -> Tuple[List[ExperienceRecord], Tuple[str, ...]]:
-        """Read current source hashes without doing network Remote Proof work."""
+    def _collect_eligible_records(self) -> Tuple[List[ExperienceRecord], Tuple[SkippedSource, ...]]:
+        """Resolve one authoritative eligible source set without Remote Proof."""
 
         records: List[ExperienceRecord] = []
-        unusable_paths: List[str] = []
+        skipped: List[SkippedSource] = []
         for path in self._source_paths():
-            relative = path.relative_to(self.source_root).as_posix()
-            raw_text = path.read_text(encoding="utf-8", errors="replace")
-            marker = raw_text.find("\n---\n", 4) if raw_text.startswith("---\n") else -1
-            if marker < 0 or not re.search(r"^experience:\s*$", raw_text[4:marker], re.MULTILINE):
-                continue
-            source_hash = self.git.tracked_source_hash(relative)
-            if not source_hash:
-                unusable_paths.append(relative)
-                continue
-            try:
-                record = parse_experience_fragment(path, self.source_root, source_hash)
-            except (FragmentValidationError, OSError, UnicodeError, ValueError):
-                unusable_paths.append(relative)
-                continue
-            records.append(record)
-        return records, tuple(sorted(unusable_paths))
+            record, diagnostic = self._resolve_source_path(path)
+            if diagnostic:
+                skipped.append(diagnostic)
+            if record is not None:
+                records.append(record)
 
-    def _collect_projection(self) -> RebuildReport:
-        report = RebuildReport()
-        parsed_records = []
-        parsed_proofs = []
-        for path in self._source_paths():
-            record, proof, skipped = self._parse_path(path)
-            if skipped:
-                report.skipped.append(skipped)
-            if record is None or proof is None:
-                continue
-            parsed_records.append(record)
-            parsed_proofs.append(proof)
-        record_ids = {record.id for record in parsed_records}
-        for record, proof in zip(parsed_records, parsed_proofs):
+        record_ids = {record.id for record in records}
+        eligible: List[ExperienceRecord] = []
+        for record in records:
             if record.outcome == "REINFORCE" and record.canonical_id not in record_ids:
-                report.skipped.append(
+                skipped.append(
                     SkippedSource(
                         record.source_path,
                         "canonical_experience_unavailable",
                         f"REINFORCE canonical_id {record.canonical_id} is not present in the authoritative scan",
+                        experience_id=record.id,
+                        scope=record.scope,
+                        canonical_project_key=record.project_key,
+                        source_hash=record.source_hash,
                     )
                 )
                 continue
             missing_supersedes = [old_id for old_id in record.supersedes if old_id not in record_ids]
             if record.outcome == "CORRECT" and missing_supersedes:
-                report.skipped.append(
+                skipped.append(
                     SkippedSource(
                         record.source_path,
                         "superseded_experience_unavailable",
                         f"CORRECT supersedes unavailable Experience ids: {', '.join(sorted(missing_supersedes))}",
+                        experience_id=record.id,
+                        scope=record.scope,
+                        canonical_project_key=record.project_key,
+                        source_hash=record.source_hash,
                     )
                 )
                 continue
+            eligible.append(record)
+        return eligible, tuple(sorted(skipped, key=lambda item: item.source_path))
+
+    def _collect_projection(self) -> RebuildReport:
+        eligible, skipped = self._collect_eligible_records()
+        report = RebuildReport(skipped=list(skipped))
+        for record in eligible:
             report.projected.append(record)
-            report.proofs.append(proof)
+            report.proofs.append(self.git.prove_remote_persistence(record.source_path, record.source_hash))
         return report
 
     @contextmanager
@@ -344,36 +402,50 @@ class ExperienceProjector:
         with self._database_lock:
             return self._rebuild_locked()
 
-    def projection_freshness(self) -> ProjectionFreshness:
-        """Check DB/source compatibility without creating DB or contacting a remote."""
+    def projection_freshness(self, *, shared_knowledge_fresh: bool = False) -> ProjectionFreshness:
+        """Check DB/source compatibility after formal Shared Knowledge freshness."""
 
         with self._database_lock:
+            if not shared_knowledge_fresh:
+                return ProjectionFreshness(False, "shared_knowledge_freshness_required")
             if not self.database_path.exists():
                 return ProjectionFreshness(False, "projection_missing")
             try:
                 validate_database_file(self.database_path)
-                records, unusable_paths = self._authoritative_records_without_remote_proof()
-                if unusable_paths:
-                    return ProjectionFreshness(
-                        False,
-                        "authoritative_source_unusable",
-                        ", ".join(unusable_paths),
-                    )
+                records, diagnostics = self._collect_eligible_records()
                 connection = sqlite3.connect(str(self.database_path))
                 connection.row_factory = sqlite3.Row
                 try:
                     actual = {
-                        (row["id"], row["source_path"], row["source_hash"])
+                        (
+                            row["id"],
+                            row["source_path"],
+                            row["scope"],
+                            row["project_key"],
+                            row["source_hash"],
+                        )
                         for row in connection.execute(
-                            "SELECT id, source_path, source_hash FROM experiences"
+                            "SELECT id, source_path, scope, project_key, source_hash FROM experiences"
                         )
                     }
                 finally:
                     connection.close()
-                expected = {(record.id, record.source_path, record.source_hash) for record in records}
+                expected = {
+                    (
+                        record.id,
+                        record.source_path,
+                        record.scope,
+                        record.project_key,
+                        record.source_hash,
+                    )
+                    for record in records
+                }
                 if actual != expected:
-                    return ProjectionFreshness(False, "projection_source_mismatch")
-                return ProjectionFreshness(True, "fresh")
+                    return ProjectionFreshness(False, "projection_source_mismatch", diagnostics=diagnostics)
+                detail = ", ".join(
+                    f"{item.source_path}:{item.reason_code}" for item in diagnostics
+                )
+                return ProjectionFreshness(True, "fresh", detail, diagnostics)
             except (DatabaseCorruptionError, OSError, sqlite3.DatabaseError) as exc:
                 return ProjectionFreshness(False, "projection_invalid", str(exc))
 
@@ -384,13 +456,13 @@ class ExperienceProjector:
             source_hash = self.git.tracked_source_hash(source_path)
             if not source_hash:
                 return RemoteProof(False, source_path, None, None, None, None, "source_not_tracked")
-            record = parse_experience_fragment(path, self.source_root, source_hash)
+            record, skipped = self._resolve_source_path(path)
+            if skipped or record is None:
+                if skipped:
+                    raise FragmentValidationError(skipped.detail, reason_code=skipped.reason_code)
+                raise FragmentValidationError("source has no Experience overlay")
             proof = self.git.prove_remote_persistence(record.source_path, record.source_hash)
-            records = []
-            for candidate_path in self._source_paths():
-                parsed, _, _ = self._parse_path(candidate_path)
-                if parsed is not None:
-                    records.append(parsed)
+            records, _ = self._collect_eligible_records()
             if not any(item.id == record.id for item in records):
                 records.append(record)
             record_ids = {item.id for item in records}
@@ -407,12 +479,25 @@ class ExperienceProjector:
                 self._rebuild_locked()
             return proof
 
-    def recall(self, context: RecallContext) -> List[RecallCandidate]:
-        return list(self.recall_with_stats(context).candidates)
+    def recall(
+        self, context: RecallContext, *, shared_knowledge_fresh: bool = False
+    ) -> List[RecallCandidate]:
+        return list(
+            self.recall_with_stats(
+                context, shared_knowledge_fresh=shared_knowledge_fresh
+            ).candidates
+        )
 
-    def recall_with_stats(self, context: RecallContext) -> RecallRun:
+    def recall_with_stats(
+        self, context: RecallContext, *, shared_knowledge_fresh: bool = False
+    ) -> RecallRun:
         with self._database_lock:
             try:
+                if not shared_knowledge_fresh:
+                    return RecallRun.empty()
+                freshness = self.projection_freshness(shared_knowledge_fresh=True)
+                if not freshness.ready:
+                    self._rebuild_locked()
                 with self._connection() as connection:
                     return recall_with_stats(connection, context)
             except (DatabaseCorruptionError, sqlite3.DatabaseError):

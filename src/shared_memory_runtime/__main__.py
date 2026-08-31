@@ -35,6 +35,7 @@ def main() -> int:
                     "remote_verified": report.remote_verified_count,
                     "skipped": len(report.skipped),
                     "skip_reason_counts": Counter(item.reason_code for item in report.skipped),
+                    "skipped_sources": [item.as_mapping() for item in report.skipped],
                 },
                 ensure_ascii=False,
             )

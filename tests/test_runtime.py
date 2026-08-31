@@ -162,10 +162,10 @@ def test_status_and_remote_gate(tmp_path: Path) -> None:
     source, _ = source_repo(
         tmp_path,
         {
-            ".memory/projects/example/tasks/candidate.md": fragment(
+            ".memory/projects/example-project-3d3378b2/tasks/candidate.md": fragment(
                 make_id(1), status="completed", verification="candidate"
             ),
-            ".memory/projects/example/tasks/verified.md": fragment(make_id(2)),
+            ".memory/projects/example-project-3d3378b2/tasks/verified.md": fragment(make_id(2)),
         },
     )
     database = tmp_path / "experience.db"
@@ -178,10 +178,10 @@ def test_status_and_remote_gate(tmp_path: Path) -> None:
         anchors=("git/index.lock",),
         query="index lock",
     )
-    candidates = projector.recall(context)
+    candidates = projector.recall(context, shared_knowledge_fresh=True)
     assert [candidate.experience_id for candidate in candidates] == [make_id(2)]
 
-    changed = source / ".memory/projects/example/tasks/verified.md"
+    changed = source / ".memory/projects/example-project-3d3378b2/tasks/verified.md"
     changed.write_text(changed.read_text(encoding="utf-8").replace("verification: verified", "verification: candidate"), encoding="utf-8")
     failed = ExperienceProjector(source, tmp_path / "failed.db").rebuild()
     failed_row = next(record for record in failed.projected if record.id == make_id(2))
@@ -194,7 +194,7 @@ def test_status_and_remote_gate(tmp_path: Path) -> None:
 def test_missing_remote_is_not_remote_verified(tmp_path: Path) -> None:
     source, _ = source_repo(
         tmp_path,
-        {".memory/projects/example/tasks/experience.md": fragment(make_id(3))},
+        {".memory/projects/example-project-3d3378b2/tasks/experience.md": fragment(make_id(3))},
     )
     run_git(source, "remote", "remove", "origin")
     report = ExperienceProjector(source, tmp_path / "experience.db").rebuild()
@@ -206,7 +206,7 @@ def test_missing_remote_is_not_remote_verified(tmp_path: Path) -> None:
 def test_projection_schema_uses_explicit_status_fields(tmp_path: Path) -> None:
     source, _ = source_repo(
         tmp_path,
-        {".memory/projects/example/tasks/experience.md": fragment(make_id(4))},
+        {".memory/projects/example-project-3d3378b2/tasks/experience.md": fragment(make_id(4))},
     )
     database = tmp_path / "experience.db"
     ExperienceProjector(source, database).rebuild()
@@ -242,8 +242,8 @@ def test_global_and_project_scope_are_filtered_before_ranking(tmp_path: Path) ->
     source, _ = source_repo(
         tmp_path,
         {
-            ".memory/projects/one/tasks/one.md": one,
-            ".memory/projects/two/tasks/two.md": two,
+            ".memory/projects/example-one-e3773723/tasks/one.md": one,
+            ".memory/projects/example-two-1e218ee2/tasks/two.md": two,
             ".memory/global/patterns/global.md": global_record,
         },
     )
@@ -254,7 +254,10 @@ def test_global_and_project_scope_are_filtered_before_ranking(tmp_path: Path) ->
         anchors=("git/index.lock",),
         query="project",
     )
-    ids = {candidate.experience_id for candidate in projector.recall(context)}
+    ids = {
+        candidate.experience_id
+        for candidate in projector.recall(context, shared_knowledge_fresh=True)
+    }
     assert make_id(10) in ids
     assert make_id(11) not in ids
     assert make_id(12) in ids
@@ -266,8 +269,8 @@ def test_feedback_rebuild_survives_database_deletion(tmp_path: Path) -> None:
     source, _ = source_repo(
         tmp_path,
         {
-            ".memory/projects/example/tasks/canonical.md": fragment(canonical),
-            ".memory/projects/example/tasks/reinforce.md": fragment(
+            ".memory/projects/example-project-3d3378b2/tasks/canonical.md": fragment(canonical),
+            ".memory/projects/example-project-3d3378b2/tasks/reinforce.md": fragment(
                 reinforce,
                 outcome="REINFORCE",
                 canonical_id=canonical,
@@ -303,8 +306,8 @@ def test_correction_supersedes_old_experience_without_rewriting_it(tmp_path: Pat
     source, _ = source_repo(
         tmp_path,
         {
-            ".memory/projects/example/tasks/old.md": fragment(old_id, core_action="Remove stale lock.", exceptions="None"),
-            ".memory/projects/example/tasks/correction.md": fragment(
+            ".memory/projects/example-project-3d3378b2/tasks/old.md": fragment(old_id, core_action="Remove stale lock.", exceptions="None"),
+            ".memory/projects/example-project-3d3378b2/tasks/correction.md": fragment(
                 correction_id,
                 outcome="CORRECT",
                 canonical_id=correction_id,
@@ -330,7 +333,8 @@ def test_correction_supersedes_old_experience_without_rewriting_it(tmp_path: Pat
             project_key=project_key("github.com/example/project"),
             anchors=("git/index.lock",),
             query="lock",
-        )
+        ),
+        shared_knowledge_fresh=True,
     )
     ids = {candidate.experience_id for candidate in candidates}
     assert correction_id in ids
@@ -388,7 +392,7 @@ def test_anchor_match_is_candidate_only_and_compiler_is_deterministic() -> None:
 def test_short_text_fallback_and_capsule_limits(tmp_path: Path) -> None:
     files = {}
     for number in range(50, 58):
-        files[f".memory/projects/example/tasks/{number}.md"] = fragment(
+        files[f".memory/projects/example-project-3d3378b2/tasks/{number}.md"] = fragment(
             make_id(number),
             title=f"锁文件经验 {number}",
             summary="中文短查询验证锁文件回退。",
@@ -398,15 +402,15 @@ def test_short_text_fallback_and_capsule_limits(tmp_path: Path) -> None:
     projector = ExperienceProjector(source, tmp_path / "experience.db")
     projector.rebuild()
     base = dict(project_key=project_key("github.com/example/project"), anchors=("git/index.lock",), query="锁文")
-    assert len(projector.recall(RecallContext(**base))) == 4
-    assert len(projector.recall(RecallContext(**base, task_class="complex"))) == 5
-    assert len(projector.recall(RecallContext(**base, task_class="debugging", expand=True))) == 6
+    assert len(projector.recall(RecallContext(**base), shared_knowledge_fresh=True)) == 4
+    assert len(projector.recall(RecallContext(**base, task_class="complex"), shared_knowledge_fresh=True)) == 5
+    assert len(projector.recall(RecallContext(**base, task_class="debugging", expand=True), shared_knowledge_fresh=True)) == 6
 
 
 def test_corruption_quarantine_and_atomic_rebuild(tmp_path: Path) -> None:
     source, _ = source_repo(
         tmp_path,
-        {".memory/projects/example/tasks/experience.md": fragment(make_id(60))},
+        {".memory/projects/example-project-3d3378b2/tasks/experience.md": fragment(make_id(60))},
     )
     database = tmp_path / "experience.db"
     projector = ExperienceProjector(source, database)
@@ -428,7 +432,8 @@ def test_corruption_quarantine_and_atomic_rebuild(tmp_path: Path) -> None:
             project_key=project_key("github.com/example/project"),
             anchors=("git/index.lock",),
             query="index lock",
-        )
+        ),
+        shared_knowledge_fresh=True,
     )
 
     for _ in range(3):
@@ -441,11 +446,11 @@ def test_corruption_quarantine_and_atomic_rebuild(tmp_path: Path) -> None:
 def test_projection_failure_preserves_authoritative_source(tmp_path: Path) -> None:
     source, _ = source_repo(
         tmp_path,
-        {".memory/projects/example/tasks/experience.md": fragment(make_id(61))},
+        {".memory/projects/example-project-3d3378b2/tasks/experience.md": fragment(make_id(61))},
     )
     database = tmp_path / "experience.db"
     projector = ExperienceProjector(source, database)
-    source_file = source / ".memory/projects/example/tasks/experience.md"
+    source_file = source / ".memory/projects/example-project-3d3378b2/tasks/experience.md"
     before = source_file.read_bytes()
 
     import shared_memory_runtime.projector as projector_module
@@ -458,7 +463,7 @@ def test_projection_failure_preserves_authoritative_source(tmp_path: Path) -> No
     projector_module.open_database = fail_open_database
     try:
         try:
-            projector.project_path(".memory/projects/example/tasks/experience.md")
+            projector.project_path(".memory/projects/example-project-3d3378b2/tasks/experience.md")
         except sqlite3.OperationalError:
             pass
         else:
@@ -473,7 +478,7 @@ def test_projection_failure_preserves_authoritative_source(tmp_path: Path) -> No
 def test_recall_stats_and_local_only_metrics(tmp_path: Path) -> None:
     source, _ = source_repo(
         tmp_path,
-        {".memory/projects/example/tasks/experience.md": fragment(make_id(62))},
+        {".memory/projects/example-project-3d3378b2/tasks/experience.md": fragment(make_id(62))},
     )
     database = tmp_path / "experience.db"
     projector = ExperienceProjector(source, database)
@@ -483,7 +488,8 @@ def test_recall_stats_and_local_only_metrics(tmp_path: Path) -> None:
             project_key=project_key("github.com/example/project"),
             anchors=("git/index.lock",),
             query="index lock",
-        )
+        ),
+        shared_knowledge_fresh=True,
     )
     assert len(run.candidates) == 1
     assert run.stats.candidate_count >= 1
@@ -529,20 +535,118 @@ def test_recall_stats_and_local_only_metrics(tmp_path: Path) -> None:
 def test_projection_freshness_is_separate_from_runtime_compatibility(tmp_path: Path) -> None:
     source, _ = source_repo(
         tmp_path,
-        {".memory/projects/example/tasks/experience.md": fragment(make_id(63))},
+        {".memory/projects/example-project-3d3378b2/tasks/experience.md": fragment(make_id(63))},
     )
     database = tmp_path / "experience.db"
     projector = ExperienceProjector(source, database)
 
-    assert projector.projection_freshness().reason_code == "projection_missing"
+    assert projector.projection_freshness().reason_code == "shared_knowledge_freshness_required"
+    assert projector.projection_freshness(shared_knowledge_fresh=True).reason_code == "projection_missing"
     projector.rebuild()
-    assert projector.projection_freshness().ready is True
+    assert projector.projection_freshness(shared_knowledge_fresh=True).ready is True
 
-    source_file = source / ".memory/projects/example/tasks/experience.md"
+    source_file = source / ".memory/projects/example-project-3d3378b2/tasks/experience.md"
     source_file.write_text(
         source_file.read_text(encoding="utf-8").replace("Index lock ownership", "Changed lock ownership"),
         encoding="utf-8",
     )
-    freshness = projector.projection_freshness()
+    freshness = projector.projection_freshness(shared_knowledge_fresh=True)
     assert freshness.ready is False
     assert freshness.reason_code == "projection_source_mismatch"
+
+
+def test_canonical_source_resolution_excludes_malformed_and_mismatched_paths(tmp_path: Path) -> None:
+    valid_id = make_id(64)
+    malformed_id = make_id(65)
+    mismatch_id = make_id(66)
+    valid_path = ".memory/projects/example-project-3d3378b2/tasks/valid.md"
+    malformed_path = ".memory/projects/shared-memory-runtime-3016876a/tasks/malformed.md"
+    mismatch_path = ".memory/projects/wrong-project-key/tasks/mismatch.md"
+    source, _ = source_repo(
+        tmp_path,
+        {
+            valid_path: fragment(valid_id),
+            malformed_path: fragment(malformed_id, project="shared-memory-runtime"),
+            mismatch_path: fragment(mismatch_id),
+        },
+    )
+    projector = ExperienceProjector(source, tmp_path / "experience.db")
+
+    report = projector.rebuild()
+    assert {record.id for record in report.projected} == {valid_id}
+    diagnostics = {item.source_path: item for item in report.skipped}
+    assert diagnostics[malformed_path].eligibility == "excluded"
+    assert diagnostics[malformed_path].reason_code == "invalid_project_identity"
+    assert diagnostics[malformed_path].experience_id == malformed_id
+    assert diagnostics[malformed_path].canonical_project_key is None
+    assert diagnostics[mismatch_path].eligibility == "excluded"
+    assert diagnostics[mismatch_path].reason_code == "project_key_mismatch"
+    assert diagnostics[mismatch_path].experience_id == mismatch_id
+    assert diagnostics[mismatch_path].canonical_project_key == project_key("github.com/example/project")
+
+    freshness = projector.projection_freshness(shared_knowledge_fresh=True)
+    assert freshness.ready is True
+    assert {item.source_path for item in freshness.diagnostics} == {malformed_path, mismatch_path}
+    assert {item.reason_code for item in freshness.diagnostics} == {
+        "invalid_project_identity",
+        "project_key_mismatch",
+    }
+    assert "authoritative_source_unusable" not in freshness.detail
+
+    recalled = projector.recall(
+        RecallContext(
+            project_key=project_key("github.com/example/project"),
+            anchors=("git/index.lock",),
+            query="index lock",
+        ),
+        shared_knowledge_fresh=True,
+    )
+    assert [candidate.experience_id for candidate in recalled] == [valid_id]
+
+
+def test_projection_freshness_requires_shared_knowledge_freshness(tmp_path: Path) -> None:
+    source, _ = source_repo(
+        tmp_path,
+        {".memory/projects/example-project-3d3378b2/tasks/experience.md": fragment(make_id(67))},
+    )
+    projector = ExperienceProjector(source, tmp_path / "experience.db")
+    projector.rebuild()
+
+    blocked = projector.projection_freshness()
+    assert blocked.ready is False
+    assert blocked.reason_code == "shared_knowledge_freshness_required"
+    assert projector.recall(
+        RecallContext(
+            project_key=project_key("github.com/example/project"),
+            anchors=("git/index.lock",),
+            query="index lock",
+        )
+    ) == []
+
+
+def test_rebuild_and_freshness_share_eligible_source_set(tmp_path: Path) -> None:
+    valid_ids = [make_id(68), make_id(69), make_id(70)]
+    malformed_id = make_id(71)
+    files = {
+        f".memory/projects/example-project-3d3378b2/tasks/valid-{index}.md": fragment(experience_id)
+        for index, experience_id in enumerate(valid_ids)
+    }
+    malformed_path = ".memory/projects/shared-memory-runtime-3016876a/tasks/malformed.md"
+    files[malformed_path] = fragment(malformed_id, project="shared-memory-runtime")
+    source, _ = source_repo(tmp_path, files)
+    database = tmp_path / "experience.db"
+    projector = ExperienceProjector(source, database)
+
+    cold = projector.rebuild()
+    cold_ids = {record.id for record in cold.projected}
+    fresh = projector.projection_freshness(shared_knowledge_fresh=True)
+    assert cold_ids == set(valid_ids)
+    assert fresh.ready is True
+    assert {item.experience_id for item in fresh.diagnostics} == {malformed_id}
+    assert {item.reason_code for item in fresh.diagnostics} == {"invalid_project_identity"}
+
+    before = database.read_bytes()
+    warm = projector.projection_freshness(shared_knowledge_fresh=True)
+    assert warm.ready is True
+    assert warm.diagnostics == fresh.diagnostics
+    assert database.read_bytes() == before

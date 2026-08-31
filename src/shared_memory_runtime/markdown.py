@@ -21,6 +21,10 @@ HEADING_RE = re.compile(r"^(#{2,6})\s+(.+?)\s*$", re.MULTILINE)
 class FragmentValidationError(ValueError):
     """Raised when an Experience-bearing Primary Fragment is not valid."""
 
+    def __init__(self, message: str, *, reason_code: Optional[str] = None):
+        super().__init__(message)
+        self.reason_code = reason_code
+
 
 def normalize_project_identity(identity: str) -> str:
     value = identity.strip()
@@ -44,6 +48,31 @@ def project_key(identity: str) -> str:
     repository_path = normalized.split("/", 1)[1]
     slug = re.sub(r"[^a-z0-9]+", "-", repository_path.casefold()).strip("-")
     return f"{slug}-{hashlib.sha256(normalized.encode('utf-8')).hexdigest()[:8]}"
+
+
+def _project_directory_key(path: Path, source_root: Path) -> Optional[str]:
+    relative_parts = path.resolve().relative_to(source_root.resolve()).parts
+    if len(relative_parts) < 4 or relative_parts[:2] != (".memory", "projects"):
+        return None
+    return relative_parts[2] or None
+
+
+def canonical_project_key_for_path(path: Path, source_root: Path, identity: str) -> str:
+    """Resolve identity and require the source path to use its derived key."""
+
+    try:
+        derived_key = project_key(identity)
+    except FragmentValidationError as exc:
+        raise FragmentValidationError(
+            str(exc), reason_code="invalid_project_identity"
+        ) from exc
+    path_key = _project_directory_key(path, source_root)
+    if path_key != derived_key:
+        raise FragmentValidationError(
+            f"project path key {path_key!r} does not match identity key {derived_key!r}",
+            reason_code="project_key_mismatch",
+        )
+    return derived_key
 
 
 def parse_front_matter(text: str) -> Tuple[Dict[str, Any], str]:
@@ -158,8 +187,11 @@ def parse_experience_fragment(
     identity = metadata.get("project")
     if scope == "project":
         if not isinstance(identity, str) or not identity.strip():
-            raise FragmentValidationError("project scope requires project identity")
-        stable_project_key = project_key(identity)
+            raise FragmentValidationError(
+                "project scope requires project identity",
+                reason_code="invalid_project_identity",
+            )
+        stable_project_key = canonical_project_key_for_path(path, source_root, identity)
     else:
         if identity not in (None, ""):
             raise FragmentValidationError("global scope must omit project identity")

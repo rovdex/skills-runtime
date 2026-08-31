@@ -44,12 +44,17 @@ entrypoints, imports, Python/SQLite/FTS5 support, and the current schema. It
 does not require `<CODEX_HOME>/.state/experience.db` to exist.
 
 Projection Compatibility is checked separately through
-`ExperienceProjector.projection_freshness()`. A missing database is
+`ExperienceProjector.projection_freshness(shared_knowledge_fresh=True)` after
+formal Shared Knowledge Freshness. Without that in-memory prerequisite the
+checkout is not authoritative. A missing database is
 `projection_missing`, not Runtime incompatibility. A fresh source set and
 source hashes reuse the projection; a missing, corrupt, or stale projection
 uses the controlled authoritative Markdown/Git rebuild with the existing
 quarantine and atomic install recovery. Bootstrap readiness caches only a
 complete successful result in process memory; failures remain retryable.
+Rebuild and Freshness use the same canonical identity/path resolver. A
+malformed or path-mismatched project source is retained as a non-blocking
+diagnostic and excluded from the eligible source set.
 
 The projection keeps the frozen `experiences` columns explicit. `canonical_id`
 and `outcome` are retained as reserved identity anchor rows in

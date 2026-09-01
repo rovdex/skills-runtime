@@ -209,6 +209,11 @@ def parse_experience_fragment(
     experience = metadata.get("experience")
     if not isinstance(experience, Mapping):
         raise FragmentValidationError("missing Experience overlay")
+    if not re.search(r"^##[ \t]+Experience[ \t]*$", body, re.MULTILINE) or not _section(body, "Experience"):
+        raise FragmentValidationError(
+            "missing Experience section",
+            reason_code="missing_experience_section",
+        )
     outcome = _required_string(experience, "outcome")
     if outcome not in {"NEW", "REINFORCE", "CORRECT"}:
         raise FragmentValidationError("invalid Experience outcome")

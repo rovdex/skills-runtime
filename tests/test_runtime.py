@@ -191,6 +191,33 @@ def test_status_and_remote_gate(tmp_path: Path) -> None:
     assert ExperienceProjector(source, tmp_path / "failed.db").recall(context) == []
 
 
+def test_experience_overlay_requires_nonempty_body_section(tmp_path: Path) -> None:
+    missing_heading = fragment(make_id(3)).replace(
+        "\n## Experience\n\n### Trigger",
+        "\n## Reflection Summary\n\n### Trigger",
+        1,
+    )
+    empty_section = fragment(make_id(4)).replace(
+        "\n## Experience\n\n### Trigger",
+        "\n## Experience\n\n## Reflection Summary",
+        1,
+    )
+    source, _ = source_repo(
+        tmp_path,
+        {
+            ".memory/projects/example-project-3d3378b2/tasks/missing-heading.md": missing_heading,
+            ".memory/projects/example-project-3d3378b2/tasks/empty-section.md": empty_section,
+        },
+    )
+
+    report = ExperienceProjector(source, tmp_path / "experience.db").rebuild()
+
+    assert report.projected == []
+    diagnostics = {item.source_path: item for item in report.skipped}
+    assert diagnostics[".memory/projects/example-project-3d3378b2/tasks/missing-heading.md"].reason_code == "missing_experience_section"
+    assert diagnostics[".memory/projects/example-project-3d3378b2/tasks/empty-section.md"].reason_code == "missing_experience_section"
+
+
 def test_missing_remote_is_not_remote_verified(tmp_path: Path) -> None:
     source, _ = source_repo(
         tmp_path,

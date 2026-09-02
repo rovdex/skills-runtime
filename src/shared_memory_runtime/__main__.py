@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .projector import ExperienceProjector
 from .recall import RecallContext
+from .finalization_receipt import verify_finalization_receipt
 
 
 def main() -> int:
@@ -24,6 +25,8 @@ def main() -> int:
     recall_parser.add_argument("--anchor", action="append", default=[])
     recall_parser.add_argument("--task-class", choices=["normal", "complex", "debugging"], default="normal")
     recall_parser.add_argument("--expand", action="store_true")
+    receipt_parser = subparsers.add_parser("receipt", help="verify formal Task terminal evidence without writes")
+    receipt_parser.add_argument("--state", type=Path, required=True)
     arguments = parser.parse_args()
     projector = ExperienceProjector(arguments.source_root, arguments.database)
     if arguments.command == "rebuild":
@@ -41,6 +44,10 @@ def main() -> int:
             )
         )
         return 0
+    if arguments.command == "receipt":
+        receipt = verify_finalization_receipt(arguments.source_root, arguments.state)
+        print(json.dumps(receipt.as_mapping(), ensure_ascii=False))
+        return 0 if receipt.complete else 1
     candidates = projector.recall(
         RecallContext(
             project_key=arguments.project_key,

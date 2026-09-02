@@ -16,6 +16,18 @@ The package provides:
 - one deterministic `compile_terminal_experience()` operation for NEW /
   REINFORCE / CORRECT classification.
 
+It also provides a read-only Finalization Receipt check for the Final Summary
+gate. From the Runtime checkout, run:
+
+```text
+PYTHONPATH=src python -m shared_memory_runtime \
+  --source-root <CODEX_HOME>/skills receipt --state <owning-state-path>
+```
+
+The command returns JSON and exits zero only when the State has a legal terminal
+pair, exactly one valid task-owned Primary is present, and that Primary is
+proved on the configured Shared Knowledge Remote.
+
 No daemon, hook, background service, vector store, embedding dependency, or
 additional Runtime State system is introduced.
 

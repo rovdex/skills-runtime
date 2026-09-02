@@ -7,6 +7,7 @@ from .compiler import (
 )
 from .models import Applicability, ExperienceRecord, FeedbackEvent
 from .metrics import TaskMetrics, metrics_path, record_task_metrics
+from .finalization_receipt import FinalizationReceipt, verify_finalization_receipt
 from .projector import ExperienceProjector, ProjectionFreshness, RebuildReport
 from .recall import RecallCandidate, RecallContext, RecallRun, RecallStats, estimate_capsule_tokens
 
@@ -17,6 +18,7 @@ __all__ = [
     "ExperienceProjector",
     "ExperienceRecord",
     "FeedbackEvent",
+    "FinalizationReceipt",
     "ProjectionFreshness",
     "RecallRun",
     "RecallStats",
@@ -28,4 +30,5 @@ __all__ = [
     "metrics_path",
     "record_task_metrics",
     "compile_terminal_experience",
+    "verify_finalization_receipt",
 ]

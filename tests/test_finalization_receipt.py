@@ -17,7 +17,13 @@ def _run_git(root: Path, *arguments: str) -> str:
     return result.stdout.strip()
 
 
-def _fragment(fragment_id: str, task_id: str, *, valid_experience: bool = True) -> str:
+def _fragment(
+    fragment_id: str,
+    task_id: str,
+    *,
+    valid_experience: bool = True,
+    project: str = "github.com/example/project",
+) -> str:
     experience_section = """
 ## Experience
 
@@ -45,7 +51,7 @@ State and Git evidence are available.
 id: {fragment_id}
 type: task
 scope: project
-project: github.com/example/project
+project: {project}
 task_id: {task_id}
 status: completed
 confidence: high
@@ -111,13 +117,20 @@ def _source_repo(tmp_path: Path, files: dict[str, str]) -> Path:
     return source
 
 
-def _state(path: Path, task_id: str, *, finalization_state: str = "sedimented", learning_stage: str = "remote_verified") -> None:
+def _state(
+    path: Path,
+    task_id: str,
+    *,
+    project_key: str = "example-project-3d3378b2",
+    finalization_state: str = "sedimented",
+    learning_stage: str = "remote_verified",
+) -> None:
     path.write_text(
         json.dumps(
             {
                 "version": 3,
                 "task_id": task_id,
-                "project_key": "example-project-3d3378b2",
+                "project_key": project_key,
                 "finalization_state": finalization_state,
                 "learning_stage": learning_stage,
             }
@@ -198,3 +211,26 @@ def test_receipt_rejects_duplicate_primary_invalid_experience_and_unpushed_chang
     assert unpushed.complete is False
     assert unpushed.push_verified is False
     assert "remote_proof_containing_revision_unavailable" in unpushed.reason_codes
+
+
+def test_receipt_accepts_historical_non_default_port_project_key(tmp_path: Path) -> None:
+    task_id = "task-qdtg-legacy-key"
+    fragment_id = "01K00000000000000000000006"
+    source = _source_repo(
+        tmp_path,
+        {
+            ".memory/projects/adc-approval-b93c923f/tasks/primary.md": _fragment(
+                fragment_id,
+                task_id,
+                project="qdtg.com:43000/ADC/adc-approval",
+            )
+        },
+    )
+    state = tmp_path / "legacy-port.json"
+    _state(state, task_id, project_key="adc-approval-b93c923f")
+
+    receipt = verify_finalization_receipt(source, state)
+
+    assert receipt.complete is True
+    assert receipt.primary_id == fragment_id
+    assert receipt.reason_codes == ("receipt_complete",)

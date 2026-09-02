@@ -30,6 +30,43 @@ def normalize_project_identity(identity: str) -> str:
     value = identity.strip()
     if not value:
         raise FragmentValidationError("project identity is empty")
+    scheme_match = re.match(r"^(https?|ssh)://", value, flags=re.IGNORECASE)
+    scheme = scheme_match.group(1).casefold() if scheme_match else ""
+    value = re.sub(r"^(https?|ssh)://", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"^git@", "", value, flags=re.IGNORECASE)
+    value = value.strip("/")
+    host, separator, path = value.partition("/")
+    if not separator or not path:
+        raise FragmentValidationError("project identity must contain host and repository")
+    if ":" in host:
+        host_name, port = host.rsplit(":", 1)
+        if port.isdigit():
+            default_port = (scheme == "http" and port == "80") or (
+                scheme == "https" and port == "443"
+            ) or (scheme == "ssh" and port == "22")
+            host = host_name if default_port else f"{host_name}:{port}"
+        else:
+            # Support scp-style Git remotes such as git@host:org/repo.
+            host = host_name
+            path = f"{port}/{path}"
+    if path.endswith(".git"):
+        path = path[:-4]
+    if host.casefold() == "github.com":
+        path = path.casefold()
+    return f"{host.casefold()}/{path}"
+
+
+def project_key(identity: str) -> str:
+    normalized = normalize_project_identity(identity)
+    repository_path = normalized.split("/", 1)[1]
+    slug = re.sub(r"[^a-z0-9]+", "-", repository_path.casefold()).strip("-")
+    return f"{slug}-{hashlib.sha256(normalized.encode('utf-8')).hexdigest()[:8]}"
+
+
+def _legacy_runtime_normalize_project_identity(identity: str) -> str:
+    """Reproduce the pre-port-fix key input for existing source directories."""
+
+    value = identity.strip()
     value = re.sub(r"^https?://", "", value, flags=re.IGNORECASE)
     value = re.sub(r"^git@", "", value, flags=re.IGNORECASE)
     value = value.replace(":", "/").strip("/")
@@ -43,11 +80,29 @@ def normalize_project_identity(identity: str) -> str:
     return f"{host.casefold()}/{path}"
 
 
-def project_key(identity: str) -> str:
+def _legacy_project_key(identity: str) -> str:
+    """Return the historical basename-plus-hash key used by older Fragments."""
+
     normalized = normalize_project_identity(identity)
+    repository_name = normalized.rsplit("/", 1)[-1]
+    slug = re.sub(r"[^a-z0-9]+", "-", repository_name.casefold()).strip("-")
+    return f"{slug}-{hashlib.sha256(normalized.encode('utf-8')).hexdigest()[:8]}"
+
+
+def _legacy_runtime_project_key(identity: str) -> str:
+    normalized = _legacy_runtime_normalize_project_identity(identity)
     repository_path = normalized.split("/", 1)[1]
     slug = re.sub(r"[^a-z0-9]+", "-", repository_path.casefold()).strip("-")
     return f"{slug}-{hashlib.sha256(normalized.encode('utf-8')).hexdigest()[:8]}"
+
+
+def project_key_aliases(identity: str) -> Tuple[str, ...]:
+    """Return deterministic historical keys accepted during source validation."""
+
+    canonical = project_key(identity)
+    aliases = {canonical, _legacy_project_key(identity), _legacy_runtime_project_key(identity)}
+    aliases.discard(canonical)
+    return tuple(sorted(aliases))
 
 
 def _project_directory_key(path: Path, source_root: Path) -> Optional[str]:
@@ -58,7 +113,7 @@ def _project_directory_key(path: Path, source_root: Path) -> Optional[str]:
 
 
 def canonical_project_key_for_path(path: Path, source_root: Path, identity: str) -> str:
-    """Resolve identity and require the source path to use its derived key."""
+    """Resolve identity and accept only canonical or known historical keys."""
 
     try:
         derived_key = project_key(identity)
@@ -67,9 +122,10 @@ def canonical_project_key_for_path(path: Path, source_root: Path, identity: str)
             str(exc), reason_code="invalid_project_identity"
         ) from exc
     path_key = _project_directory_key(path, source_root)
-    if path_key != derived_key:
+    accepted_keys = {derived_key, *project_key_aliases(identity)}
+    if path_key not in accepted_keys:
         raise FragmentValidationError(
-            f"project path key {path_key!r} does not match identity key {derived_key!r}",
+            f"project path key {path_key!r} does not match identity keys {sorted(accepted_keys)!r}",
             reason_code="project_key_mismatch",
         )
     return derived_key

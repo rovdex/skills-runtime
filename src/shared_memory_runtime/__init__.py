@@ -25,6 +25,13 @@ from .task_policy import (
     compile_task_policy,
     validate_task_policy,
 )
+from .policy_adaptation import (
+    PolicyAdvice,
+    PolicyAdviceProvenance,
+    PolicyAdaptationResult,
+    adapt_task_policy,
+    validate_policy_advice,
+)
 
 __all__ = [
     "Applicability",
@@ -59,4 +66,9 @@ __all__ = [
     "classify_task",
     "compile_task_policy",
     "validate_task_policy",
+    "PolicyAdvice",
+    "PolicyAdviceProvenance",
+    "PolicyAdaptationResult",
+    "adapt_task_policy",
+    "validate_policy_advice",
 ]

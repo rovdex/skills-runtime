@@ -307,6 +307,12 @@ def parse_experience_fragment(
         )
     if outcome == "REINFORCE" and feedback is None:
         raise FragmentValidationError("REINFORCE requires rebuildable feedback")
+    policy_advice = experience.get("policy_advice")
+    if policy_advice is not None and not isinstance(policy_advice, Mapping):
+        raise FragmentValidationError(
+            "experience.policy_advice must be a mapping",
+            reason_code="invalid_policy_advice",
+        )
     created_at = str(metadata.get("created_at") or created_at_fallback)
     if not created_at:
         raise FragmentValidationError("created_at is required")
@@ -337,4 +343,5 @@ def parse_experience_fragment(
         anchors=_anchor_pairs(metadata, applicability),
         supersedes=_supersedes(metadata),
         feedback=feedback,
+        policy_advice=policy_advice,
     )

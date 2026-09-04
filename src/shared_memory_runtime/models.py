@@ -103,6 +103,7 @@ class ExperienceRecord:
     anchors: Tuple[Tuple[str, str], ...] = ()
     supersedes: Tuple[str, ...] = ()
     feedback: Optional[FeedbackEvent] = None
+    policy_advice: Optional[Mapping[str, object]] = None
 
     @property
     def effective_text(self) -> str:

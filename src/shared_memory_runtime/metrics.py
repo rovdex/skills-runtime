@@ -47,13 +47,23 @@ class TaskMetrics:
     pushes: int = 0
     remote_verifies: int = 0
     finalization_ms: float = 0.0
+    policy_compile_ms: float = 0.0
+    policy_task_class: Optional[str] = None
+    policy_valid: Optional[bool] = None
+    policy_fallback: Optional[bool] = None
+    policy_skill_count: int = 0
+    policy_max_capsules: Optional[int] = None
+    policy_max_read_lines: Optional[int] = None
+    policy_max_output_kb: Optional[int] = None
+    policy_shadow_differences: int = 0
+    policy_mode: Optional[str] = None
 
     def _validate(self) -> None:
         if not self.task_id.strip() or not self.task_result.strip():
             raise ValueError("task_id and task_result are required")
         if not self.started_at.strip() or not self.finished_at.strip():
             raise ValueError("started_at and finished_at are required")
-        for name in ("recall_ms", "compiler_ms", "finalization_ms"):
+        for name in ("recall_ms", "compiler_ms", "finalization_ms", "policy_compile_ms"):
             value = float(getattr(self, name))
             if not math.isfinite(value) or value < 0:
                 raise ValueError(f"{name} must be a finite non-negative number")
@@ -71,6 +81,8 @@ class TaskMetrics:
             "shared_knowledge_commits",
             "pushes",
             "remote_verifies",
+            "policy_skill_count",
+            "policy_shadow_differences",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -80,6 +92,12 @@ class TaskMetrics:
         unknown = set(self.extra_learning_reason_codes) - EXTRA_LEARNING_REASON_CODES
         if unknown:
             raise ValueError(f"unknown extra learning reason code: {sorted(unknown)}")
+        for name in ("policy_max_capsules", "policy_max_read_lines", "policy_max_output_kb"):
+            value = getattr(self, name)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+                raise ValueError(f"{name} must be a non-negative integer or null")
+        if self.policy_mode is not None and self.policy_mode not in {"shadow", "adapted", "active"}:
+            raise ValueError("policy_mode must be shadow, adapted, active, or null")
 
     def as_mapping(self) -> Dict[str, object]:
         self._validate()
@@ -106,6 +124,16 @@ class TaskMetrics:
             "pushes": self.pushes,
             "remote_verifies": self.remote_verifies,
             "finalization_ms": float(self.finalization_ms),
+            "policy_compile_ms": float(self.policy_compile_ms),
+            "policy_task_class": self.policy_task_class,
+            "policy_valid": self.policy_valid,
+            "policy_fallback": self.policy_fallback,
+            "policy_skill_count": self.policy_skill_count,
+            "policy_max_capsules": self.policy_max_capsules,
+            "policy_max_read_lines": self.policy_max_read_lines,
+            "policy_max_output_kb": self.policy_max_output_kb,
+            "policy_shadow_differences": self.policy_shadow_differences,
+            "policy_mode": self.policy_mode,
         }
 
 

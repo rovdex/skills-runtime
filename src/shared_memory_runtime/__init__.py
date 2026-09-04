@@ -32,6 +32,12 @@ from .policy_adaptation import (
     adapt_task_policy,
     validate_policy_advice,
 )
+from .policy_activation import (
+    OBSERVED_ACTUAL_FIELDS,
+    PROTOCOL_ONLY_FIELDS,
+    PolicyActivationResult,
+    activate_task_policy,
+)
 
 __all__ = [
     "Applicability",
@@ -71,4 +77,8 @@ __all__ = [
     "PolicyAdaptationResult",
     "adapt_task_policy",
     "validate_policy_advice",
+    "OBSERVED_ACTUAL_FIELDS",
+    "PROTOCOL_ONLY_FIELDS",
+    "PolicyActivationResult",
+    "activate_task_policy",
 ]

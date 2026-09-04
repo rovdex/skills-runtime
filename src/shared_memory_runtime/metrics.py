@@ -57,6 +57,12 @@ class TaskMetrics:
     policy_max_output_kb: Optional[int] = None
     policy_shadow_differences: int = 0
     policy_mode: Optional[str] = None
+    policy_applied_fields: Tuple[str, ...] = field(default_factory=tuple)
+    policy_source: Optional[str] = None
+    policy_observed_actual_behavior: Dict[str, int] = field(default_factory=dict)
+    policy_protocol_consumed_fields: Tuple[str, ...] = field(default_factory=tuple)
+    policy_not_instrumented_fields: Tuple[str, ...] = field(default_factory=tuple)
+    policy_runtime_enforced_fields: Tuple[str, ...] = field(default_factory=tuple)
 
     def _validate(self) -> None:
         if not self.task_id.strip() or not self.task_result.strip():
@@ -98,6 +104,19 @@ class TaskMetrics:
                 raise ValueError(f"{name} must be a non-negative integer or null")
         if self.policy_mode is not None and self.policy_mode not in {"shadow", "adapted", "active"}:
             raise ValueError("policy_mode must be shadow, adapted, active, or null")
+        if self.policy_source is not None and self.policy_source not in {
+            "existing_default",
+            "validated_jit_task_policy",
+            "skill_default",
+            "project_requirement",
+            "user_requirement",
+        }:
+            raise ValueError("unknown policy_source")
+        for key, value in self.policy_observed_actual_behavior.items():
+            if key not in {"shell_calls", "wsl_process_count", "file_reads", "tool_output_bytes", "capsule_count"}:
+                raise ValueError("unknown observed actual behavior field")
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError("observed actual behavior values must be non-negative integers")
 
     def as_mapping(self) -> Dict[str, object]:
         self._validate()
@@ -134,6 +153,12 @@ class TaskMetrics:
             "policy_max_output_kb": self.policy_max_output_kb,
             "policy_shadow_differences": self.policy_shadow_differences,
             "policy_mode": self.policy_mode,
+            "policy_applied_fields": sorted(set(self.policy_applied_fields)),
+            "policy_source": self.policy_source,
+            "policy_observed_actual_behavior": dict(sorted(self.policy_observed_actual_behavior.items())),
+            "policy_protocol_consumed_fields": sorted(set(self.policy_protocol_consumed_fields)),
+            "policy_not_instrumented_fields": sorted(set(self.policy_not_instrumented_fields)),
+            "policy_runtime_enforced_fields": sorted(set(self.policy_runtime_enforced_fields)),
         }
 
 

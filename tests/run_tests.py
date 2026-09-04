@@ -12,7 +12,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 MODULES = []
-for filename in ("test_runtime.py", "test_task_policy.py", "test_policy_adaptation.py", "test_policy_activation.py"):
+for filename in (
+    "test_runtime.py",
+    "test_task_policy.py",
+    "test_policy_adaptation.py",
+    "test_policy_activation.py",
+    "test_finalization_receipt.py",
+    "test_finalization_reconciliation.py",
+):
     SPEC = importlib.util.spec_from_file_location(f"runtime_{filename}", Path(__file__).with_name(filename))
     MODULE = importlib.util.module_from_spec(SPEC)
     assert SPEC.loader is not None

@@ -28,6 +28,20 @@ The command returns JSON and exits zero only when the State has a legal terminal
 pair, exactly one valid task-owned Primary is present, and that Primary is
 proved on the configured Shared Knowledge Remote.
 
+Cross-device reconciliation is separate from the terminal Receipt gate. Run:
+
+```text
+PYTHONPATH=src python -m shared_memory_runtime \
+  --source-root <CODEX_HOME>/skills reconcile \
+  --state-root <CODEX_HOME>/.state/finalization \
+  --task-id <task-id>
+```
+
+The read-only result may report `Stale Local Finalization State` with
+`shared_evidence_complete: true` and `local_terminal_receipt: not_proven`.
+This never claims a remote Receipt was executed and never writes local State.
+Only the existing `receipt` command can report `complete: true`.
+
 No daemon, hook, background service, vector store, embedding dependency, or
 additional Runtime State system is introduced.
 

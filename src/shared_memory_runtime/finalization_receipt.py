@@ -17,6 +17,12 @@ from .markdown import (
 )
 
 
+TERMINAL_PAIRS = {
+    ("sedimented", "remote_verified"),
+    ("blocked", "remote_verified"),
+}
+
+
 @dataclass(frozen=True)
 class FinalizationReceipt:
     """The evidence required before a formal Task may be reported terminal."""
@@ -38,6 +44,33 @@ class FinalizationReceipt:
         result = asdict(self)
         result["reason_codes"] = list(self.reason_codes)
         return result
+
+
+@dataclass(frozen=True)
+class SharedFinalizationEvidence:
+    """Shared-side evidence inspected without claiming a local Receipt."""
+
+    state: Optional[Mapping[str, Any]]
+    task_id: Optional[str]
+    project_key: Optional[str]
+    finalization_state: Optional[str]
+    learning_stage: Optional[str]
+    task_result: Optional[str]
+    experience_outcome: Optional[str]
+    primary_path: Optional[str]
+    primary_id: Optional[str]
+    primary_type: Optional[str]
+    primary_status: Optional[str]
+    experience_verification: Optional[str]
+    primary_hash: Optional[str]
+    shared_commit: Optional[str]
+    push_verified: bool
+    remote_primary_hash: Optional[str]
+    reasons: tuple[str, ...]
+
+    @property
+    def proof_verified(self) -> bool:
+        return self.push_verified and self.shared_commit is not None
 
 
 def _read_state(path: Path) -> tuple[Optional[Mapping[str, Any]], list[str]]:
@@ -87,6 +120,112 @@ def _task_result(finalization_state: Optional[str], learning_stage: Optional[str
     return None
 
 
+def inspect_shared_finalization_evidence(
+    source_root: Path, state_path: Path
+) -> SharedFinalizationEvidence:
+    """Inspect shared-side evidence without requiring a local terminal pair."""
+
+    reasons: list[str] = []
+    state, state_reasons = _read_state(Path(state_path))
+    reasons.extend(state_reasons)
+    if state is None:
+        return SharedFinalizationEvidence(
+            state=None,
+            task_id=None,
+            project_key=None,
+            finalization_state=None,
+            learning_stage=None,
+            task_result=None,
+            experience_outcome=None,
+            primary_path=None,
+            primary_id=None,
+            primary_type=None,
+            primary_status=None,
+            experience_verification=None,
+            primary_hash=None,
+            shared_commit=None,
+            push_verified=False,
+            remote_primary_hash=None,
+            reasons=tuple(reasons),
+        )
+
+    task_id = _state_string(state, "task_id", reasons)
+    project_key = _state_string(state, "project_key", reasons)
+    finalization_state = _state_string(state, "finalization_state", reasons)
+    learning_stage = _state_string(state, "learning_stage", reasons)
+    task_result = _task_result(finalization_state, learning_stage)
+
+    primary_path: Optional[str] = None
+    primary_id: Optional[str] = None
+    primary_type: Optional[str] = None
+    primary_status: Optional[str] = None
+    experience_verification: Optional[str] = None
+    experience_outcome: Optional[str] = None
+    primary_hash: Optional[str] = None
+    shared_commit: Optional[str] = None
+    push_verified = False
+    remote_primary_hash: Optional[str] = None
+
+    if task_id and project_key:
+        candidates = _primary_candidates(Path(source_root), project_key, task_id)
+        if not candidates:
+            reasons.append("primary_missing")
+        elif len(candidates) != 1:
+            reasons.append("primary_not_exactly_one")
+        else:
+            primary = candidates[0]
+            primary_path = primary.relative_to(Path(source_root)).as_posix()
+            try:
+                metadata, _ = parse_front_matter(primary.read_text(encoding="utf-8"))
+                primary_type = str(metadata.get("type") or "").strip() or None
+                primary_status = str(metadata.get("status") or "").strip() or None
+                experience = metadata.get("experience")
+                if isinstance(experience, Mapping):
+                    value = experience.get("verification")
+                    experience_verification = str(value).strip() if value else None
+                primary_hash = _source_hash(primary)
+                record = parse_experience_fragment(primary, Path(source_root), primary_hash)
+            except (OSError, UnicodeDecodeError, FragmentValidationError) as exc:
+                if isinstance(exc, FragmentValidationError) and exc.reason_code:
+                    reasons.append(exc.reason_code)
+                else:
+                    reasons.append("primary_invalid")
+            else:
+                primary_id = record.id
+                experience_outcome = record.outcome
+                proof = GitEvidence(Path(source_root)).prove_remote_persistence(primary_path)
+                shared_commit = proof.containing_revision
+                push_verified = proof.verified
+                if proof.remote_head:
+                    remote_primary_hash = GitEvidence(Path(source_root)).blob_at(
+                        proof.remote_head, primary_path
+                    )
+                if proof.source_hash and remote_primary_hash and proof.source_hash != remote_primary_hash:
+                    reasons.append("remote_primary_hash_conflict")
+                if not proof.verified:
+                    reasons.append(f"remote_proof_{proof.reason_code}")
+
+    return SharedFinalizationEvidence(
+        state=state,
+        task_id=task_id,
+        project_key=project_key,
+        finalization_state=finalization_state,
+        learning_stage=learning_stage,
+        task_result=task_result,
+        experience_outcome=experience_outcome,
+        primary_path=primary_path,
+        primary_id=primary_id,
+        primary_type=primary_type,
+        primary_status=primary_status,
+        experience_verification=experience_verification,
+        primary_hash=primary_hash,
+        shared_commit=shared_commit,
+        push_verified=push_verified,
+        remote_primary_hash=remote_primary_hash,
+        reasons=tuple(reasons),
+    )
+
+
 def verify_finalization_receipt(source_root: Path, state_path: Path) -> FinalizationReceipt:
     """Verify terminal State, exactly-one Primary, and remote Git evidence.
 
@@ -95,10 +234,8 @@ def verify_finalization_receipt(source_root: Path, state_path: Path) -> Finaliza
     complete receipt only for the two legal terminal State/stage pairs.
     """
 
-    reasons: list[str] = []
-    state, state_reasons = _read_state(Path(state_path))
-    reasons.extend(state_reasons)
-    if state is None:
+    evidence = inspect_shared_finalization_evidence(source_root, state_path)
+    if evidence.state is None:
         return FinalizationReceipt(
             task_id=None,
             task_result=None,
@@ -111,53 +248,16 @@ def verify_finalization_receipt(source_root: Path, state_path: Path) -> Finaliza
             finalization_state=None,
             learning_stage=None,
             complete=False,
-            reason_codes=tuple(reasons),
+            reason_codes=evidence.reasons,
         )
 
-    task_id = _state_string(state, "task_id", reasons)
-    project_key = _state_string(state, "project_key", reasons)
-    finalization_state = _state_string(state, "finalization_state", reasons)
-    learning_stage = _state_string(state, "learning_stage", reasons)
-    task_result = _task_result(finalization_state, learning_stage)
+    reasons = list(evidence.reasons)
+    terminal_pair = (evidence.finalization_state, evidence.learning_stage)
+    if terminal_pair not in TERMINAL_PAIRS:
+        reasons.insert(0, "terminal_state_not_complete")
 
-    terminal_pair = (finalization_state, learning_stage)
-    if terminal_pair not in {("sedimented", "remote_verified"), ("blocked", "remote_verified")}:
-        reasons.append("terminal_state_not_complete")
-
-    primary_path: Optional[str] = None
-    primary_id: Optional[str] = None
-    experience_outcome: Optional[str] = None
-    shared_commit: Optional[str] = None
-    proof_verified = False
-
-    if task_id and project_key:
-        candidates = _primary_candidates(Path(source_root), project_key, task_id)
-        if not candidates:
-            reasons.append("primary_missing")
-        elif len(candidates) != 1:
-            reasons.append("primary_not_exactly_one")
-        else:
-            primary = candidates[0]
-            primary_path = primary.relative_to(Path(source_root)).as_posix()
-            try:
-                record = parse_experience_fragment(primary, Path(source_root), _source_hash(primary))
-            except (OSError, FragmentValidationError) as exc:
-                if isinstance(exc, FragmentValidationError) and exc.reason_code:
-                    reasons.append(exc.reason_code)
-                else:
-                    reasons.append("primary_invalid")
-            else:
-                primary_id = record.id
-                experience_outcome = record.outcome
-                proof = GitEvidence(Path(source_root)).prove_remote_persistence(primary_path)
-                shared_commit = proof.containing_revision
-                proof_verified = proof.verified
-                if not proof.verified:
-                    reasons.append(f"remote_proof_{proof.reason_code}")
-
-    push_verified = proof_verified
-    remote_verified = proof_verified and learning_stage == "remote_verified"
-    if learning_stage == "remote_verified" and not proof_verified:
+    remote_verified = evidence.proof_verified and evidence.learning_stage == "remote_verified"
+    if evidence.learning_stage == "remote_verified" and not evidence.proof_verified:
         reasons.append("remote_verified_without_primary_remote_proof")
 
     complete = not reasons and terminal_pair in {
@@ -168,16 +268,16 @@ def verify_finalization_receipt(source_root: Path, state_path: Path) -> Finaliza
         reasons.append("receipt_complete")
 
     return FinalizationReceipt(
-        task_id=task_id,
-        task_result=task_result,
-        experience_outcome=experience_outcome,
-        primary_path=primary_path,
-        primary_id=primary_id,
-        shared_commit=shared_commit,
-        push_verified=push_verified,
+        task_id=evidence.task_id,
+        task_result=evidence.task_result,
+        experience_outcome=evidence.experience_outcome,
+        primary_path=evidence.primary_path,
+        primary_id=evidence.primary_id,
+        shared_commit=evidence.shared_commit,
+        push_verified=evidence.push_verified,
         remote_verified=remote_verified,
-        finalization_state=finalization_state,
-        learning_stage=learning_stage,
+        finalization_state=evidence.finalization_state,
+        learning_stage=evidence.learning_stage,
         complete=complete,
         reason_codes=tuple(reasons),
     )

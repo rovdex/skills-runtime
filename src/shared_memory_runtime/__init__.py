@@ -7,7 +7,25 @@ from .compiler import (
 )
 from .models import Applicability, ExperienceRecord, FeedbackEvent
 from .metrics import TaskMetrics, metrics_path, record_task_metrics
-from .finalization_receipt import FinalizationReceipt, verify_finalization_receipt
+from .finalization_receipt import (
+    FinalizationReceipt,
+    SharedFinalizationEvidence,
+    inspect_shared_finalization_evidence,
+    verify_finalization_receipt,
+)
+from .finalization_reconciliation import (
+    EVIDENCE_CONFLICT,
+    RECOVERABLE_OUTSTANDING,
+    STALE_LOCAL_STATE,
+    TERMINAL,
+    UNRESOLVED_LOCAL_TASK,
+    RecoveryEvidence,
+    ReconciliationEntry,
+    ReconciliationReport,
+    parse_recovery_evidence,
+    reconcile_finalization_state,
+    reconcile_finalization_states,
+)
 from .projector import ExperienceProjector, ProjectionFreshness, RebuildReport
 from .recall import RecallCandidate, RecallContext, RecallRun, RecallStats, estimate_capsule_tokens
 from .task_policy import (
@@ -47,6 +65,7 @@ __all__ = [
     "ExperienceRecord",
     "FeedbackEvent",
     "FinalizationReceipt",
+    "SharedFinalizationEvidence",
     "ProjectionFreshness",
     "RecallRun",
     "RecallStats",
@@ -59,6 +78,18 @@ __all__ = [
     "record_task_metrics",
     "compile_terminal_experience",
     "verify_finalization_receipt",
+    "inspect_shared_finalization_evidence",
+    "EVIDENCE_CONFLICT",
+    "RECOVERABLE_OUTSTANDING",
+    "STALE_LOCAL_STATE",
+    "TERMINAL",
+    "UNRESOLVED_LOCAL_TASK",
+    "RecoveryEvidence",
+    "ReconciliationEntry",
+    "ReconciliationReport",
+    "parse_recovery_evidence",
+    "reconcile_finalization_state",
+    "reconcile_finalization_states",
     "KERNEL_FIELDS",
     "NUMERIC_BOUNDS",
     "POLICY_ENUMS",

@@ -56,6 +56,10 @@ from .policy_activation import (
     PolicyActivationResult,
     activate_task_policy,
 )
+from .jit_policy_evidence import (
+    JIT_POLICY_EVIDENCE_VERSION,
+    build_jit_policy_evidence,
+)
 
 __all__ = [
     "Applicability",
@@ -112,4 +116,6 @@ __all__ = [
     "PROTOCOL_ONLY_FIELDS",
     "PolicyActivationResult",
     "activate_task_policy",
+    "JIT_POLICY_EVIDENCE_VERSION",
+    "build_jit_policy_evidence",
 ]

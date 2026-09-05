@@ -63,6 +63,11 @@ class TaskMetrics:
     policy_protocol_consumed_fields: Tuple[str, ...] = field(default_factory=tuple)
     policy_not_instrumented_fields: Tuple[str, ...] = field(default_factory=tuple)
     policy_runtime_enforced_fields: Tuple[str, ...] = field(default_factory=tuple)
+    experience_advice_count: int = 0
+    adapted_field_count: int = 0
+    experience_conflict_count: int = 0
+    experience_policy_sources: Tuple[str, ...] = field(default_factory=tuple)
+    jit_policy_evidence_version: Optional[str] = None
 
     def _validate(self) -> None:
         if not self.task_id.strip() or not self.task_result.strip():
@@ -89,6 +94,9 @@ class TaskMetrics:
             "remote_verifies",
             "policy_skill_count",
             "policy_shadow_differences",
+            "experience_advice_count",
+            "adapted_field_count",
+            "experience_conflict_count",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -112,6 +120,11 @@ class TaskMetrics:
             "user_requirement",
         }:
             raise ValueError("unknown policy_source")
+        if self.jit_policy_evidence_version is not None and not self.jit_policy_evidence_version.strip():
+            raise ValueError("jit_policy_evidence_version must be non-empty or null")
+        for value in self.experience_policy_sources:
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError("experience_policy_sources must contain non-empty strings")
         for key, value in self.policy_observed_actual_behavior.items():
             if key not in {"shell_calls", "wsl_process_count", "file_reads", "tool_output_bytes", "capsule_count"}:
                 raise ValueError("unknown observed actual behavior field")
@@ -159,6 +172,11 @@ class TaskMetrics:
             "policy_protocol_consumed_fields": sorted(set(self.policy_protocol_consumed_fields)),
             "policy_not_instrumented_fields": sorted(set(self.policy_not_instrumented_fields)),
             "policy_runtime_enforced_fields": sorted(set(self.policy_runtime_enforced_fields)),
+            "experience_advice_count": self.experience_advice_count,
+            "adapted_field_count": self.adapted_field_count,
+            "experience_conflict_count": self.experience_conflict_count,
+            "experience_policy_sources": sorted(set(self.experience_policy_sources)),
+            "jit_policy_evidence_version": self.jit_policy_evidence_version,
         }
 
 
@@ -175,4 +193,43 @@ def record_task_metrics(metrics: TaskMetrics, codex_home: Optional[Path] = None)
             handle.write("\n")
         return True
     except (OSError, TypeError, UnicodeError, ValueError):
+        return False
+
+
+def record_final_jit_policy_metrics(
+    metrics: TaskMetrics, codex_home: Optional[Path] = None
+) -> bool:
+    """Record one final JIT evidence row for a task, idempotently.
+
+    This reuses the existing local JSONL store.  The explicit version marker
+    distinguishes the final JIT row from ordinary task metrics; a second
+    identical write is accepted while a conflicting duplicate is rejected.
+    Formal Task Single Writer ownership remains the concurrency boundary.
+    """
+
+    if metrics.jit_policy_evidence_version is None:
+        return False
+    try:
+        output_path = metrics_path(codex_home)
+        expected = metrics.as_mapping()
+        if output_path.exists():
+            with output_path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    row = json.loads(line)
+                    if (
+                        isinstance(row, dict)
+                        and row.get("task_id") == metrics.task_id
+                        and row.get("jit_policy_evidence_version") is not None
+                    ):
+                        return row == expected
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(expected, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        descriptor = os.open(str(output_path), os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+        with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
+            handle.write(line)
+            handle.write("\n")
+        return True
+    except (OSError, TypeError, UnicodeError, ValueError, json.JSONDecodeError):
         return False

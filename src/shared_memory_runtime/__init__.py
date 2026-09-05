@@ -6,7 +6,12 @@ from .compiler import (
     compile_terminal_experience,
 )
 from .models import Applicability, ExperienceRecord, FeedbackEvent
-from .metrics import TaskMetrics, metrics_path, record_task_metrics
+from .metrics import (
+    TaskMetrics,
+    metrics_path,
+    record_final_jit_policy_metrics,
+    record_task_metrics,
+)
 from .finalization_receipt import (
     FinalizationReceipt,
     SharedFinalizationEvidence,
@@ -56,6 +61,7 @@ from .policy_activation import (
     PolicyActivationResult,
     activate_task_policy,
 )
+from .formal_task_jit import FormalTaskJITResult, prepare_formal_task_jit
 from .jit_policy_evidence import (
     JIT_POLICY_EVIDENCE_VERSION,
     build_jit_policy_evidence,
@@ -80,6 +86,7 @@ __all__ = [
     "estimate_capsule_tokens",
     "metrics_path",
     "record_task_metrics",
+    "record_final_jit_policy_metrics",
     "compile_terminal_experience",
     "verify_finalization_receipt",
     "inspect_shared_finalization_evidence",
@@ -116,6 +123,8 @@ __all__ = [
     "PROTOCOL_ONLY_FIELDS",
     "PolicyActivationResult",
     "activate_task_policy",
+    "FormalTaskJITResult",
+    "prepare_formal_task_jit",
     "JIT_POLICY_EVIDENCE_VERSION",
     "build_jit_policy_evidence",
 ]

@@ -19,6 +19,7 @@ for filename in (
     "test_policy_activation.py",
     "test_jit_policy_evidence.py",
     "test_formal_task_jit.py",
+    "test_jit_invocation_evidence.py",
     "test_finalization_receipt.py",
     "test_finalization_reconciliation.py",
 ):

@@ -10,10 +10,17 @@ outside this Runtime API.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Callable, Dict, Mapping, Optional, Sequence, TypeVar
 
 from .jit_policy_evidence import build_jit_policy_evidence
+from .jit_invocation_evidence import (
+    JITInvocationEvidence,
+    JITInvocationEvidenceConflict,
+    JITInvocationEvidenceError,
+    persist_jit_invocation_evidence,
+)
 from .policy_activation import PolicyActivationResult, activate_task_policy
 from .policy_adaptation import PolicyAdaptationResult, adapt_task_policy
 from .recall import RecallCandidate
@@ -36,6 +43,7 @@ class FormalTaskJITResult:
     j2_executed: bool
     j3_executed: bool
     j4_executed: bool
+    invocation_evidence: Optional[JITInvocationEvidence] = None
 
     @property
     def fallback_to_existing_behavior(self) -> bool:
@@ -135,6 +143,10 @@ class FormalTaskJITResult:
         ``PolicyActivationResult`` before execution begins.
         """
 
+        if self.invocation_evidence is None:
+            raise JITInvocationEvidenceError(
+                "FormalTaskJITResult cannot be consumed before invocation evidence read-back"
+            )
         return execution_callback(self.activation_result)
 
 
@@ -152,6 +164,7 @@ def prepare_formal_task_jit(
     actual_metrics: Optional[Mapping[str, object]] = None,
     evidence_metrics: Optional[Mapping[str, object]] = None,
     runtime_enforced_fields: Sequence[str] = (),
+    codex_home: Optional[Path] = None,
 ) -> FormalTaskJITResult:
     """Prepare one Formal Task's J2/J3/J4 policy before normal execution.
 
@@ -179,7 +192,7 @@ def prepare_formal_task_jit(
             j3_executed=False,
             j4_executed=False,
         )
-        return FormalTaskJITResult(
+        result = FormalTaskJITResult(
             task_id=task_id,
             compiler_result=compiler_result,
             adaptation_result=None,
@@ -190,6 +203,7 @@ def prepare_formal_task_jit(
             j3_executed=False,
             j4_executed=False,
         )
+        return _persist_and_attach_invocation_evidence(result, codex_home=codex_home)
 
     adaptation_result = adapt_task_policy(
         compiler_result.policy,
@@ -216,7 +230,7 @@ def prepare_formal_task_jit(
         j3_executed=True,
         j4_executed=True,
     )
-    return FormalTaskJITResult(
+    result = FormalTaskJITResult(
         task_id=task_id,
         compiler_result=compiler_result,
         adaptation_result=adaptation_result,
@@ -227,6 +241,21 @@ def prepare_formal_task_jit(
         j3_executed=True,
         j4_executed=True,
     )
+    return _persist_and_attach_invocation_evidence(result, codex_home=codex_home)
+
+
+def _persist_and_attach_invocation_evidence(
+    result: FormalTaskJITResult, *, codex_home: Optional[Path]
+) -> FormalTaskJITResult:
+    persisted = persist_jit_invocation_evidence(result, codex_home=codex_home)
+    if persisted.status == "conflict":
+        raise JITInvocationEvidenceConflict(
+            persisted.reason or "semantic_evidence_conflict"
+        )
+    if persisted.status not in {"created", "reused"} or persisted.evidence is None:
+        reason = persisted.reason or "invocation_evidence_persist_failed"
+        raise JITInvocationEvidenceError(reason)
+    return replace(result, invocation_evidence=persisted.evidence)
 
 
 __all__ = ["FormalTaskJITResult", "prepare_formal_task_jit"]

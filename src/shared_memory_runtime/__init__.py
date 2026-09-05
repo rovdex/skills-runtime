@@ -62,6 +62,22 @@ from .policy_activation import (
     activate_task_policy,
 )
 from .formal_task_jit import FormalTaskJITResult, prepare_formal_task_jit
+from .jit_invocation_evidence import (
+    JIT_INVOCATION_EVIDENCE_VERSION,
+    JITInvocationAudit,
+    JITEvidencePersistResult,
+    JITInvocationEvidence,
+    JITInvocationEvidenceConflict,
+    JITInvocationEvidenceError,
+    JITInvocationEvidenceInvalid,
+    activation_semantic_hash,
+    audit_jit_invocation_evidence,
+    canonical_policy_serialization,
+    jit_invocation_evidence_path,
+    persist_jit_invocation_evidence,
+    policy_semantic_hash,
+    read_jit_invocation_evidence,
+)
 from .jit_policy_evidence import (
     JIT_POLICY_EVIDENCE_VERSION,
     build_jit_policy_evidence,
@@ -127,4 +143,18 @@ __all__ = [
     "prepare_formal_task_jit",
     "JIT_POLICY_EVIDENCE_VERSION",
     "build_jit_policy_evidence",
+    "JIT_INVOCATION_EVIDENCE_VERSION",
+    "JITInvocationEvidence",
+    "JITEvidencePersistResult",
+    "JITInvocationAudit",
+    "JITInvocationEvidenceError",
+    "JITInvocationEvidenceConflict",
+    "JITInvocationEvidenceInvalid",
+    "canonical_policy_serialization",
+    "policy_semantic_hash",
+    "activation_semantic_hash",
+    "jit_invocation_evidence_path",
+    "persist_jit_invocation_evidence",
+    "read_jit_invocation_evidence",
+    "audit_jit_invocation_evidence",
 ]

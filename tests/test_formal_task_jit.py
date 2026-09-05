@@ -37,7 +37,7 @@ def _candidate(experience_id: str, score: float = 1.0) -> RecallCandidate:
     )
 
 
-def test_formal_task_pipeline_order_and_activation_handoff() -> None:
+def test_formal_task_pipeline_order_and_activation_handoff(tmp_path) -> None:
     events = []
     original_compile = jit_pipeline.compile_task_policy
     original_adapt = jit_pipeline.adapt_task_policy
@@ -59,7 +59,7 @@ def test_formal_task_pipeline_order_and_activation_handoff() -> None:
     jit_pipeline.adapt_task_policy = adapt_wrapper
     jit_pipeline.activate_task_policy = activate_wrapper
     try:
-        result = prepare_formal_task_jit(TASK_ID, context=_context())
+        result = prepare_formal_task_jit(TASK_ID, context=_context(), codex_home=tmp_path)
 
         def execute(activation):
             events.append("execution")
@@ -92,6 +92,7 @@ def test_eligible_advice_and_metrics_are_correlated_once(tmp_path) -> None:
         advice_by_experience={"experience-1": {"validation": {"full_suite": True}}},
         evidence_metrics={"experience_advice_count": 1, "experience_conflict_count": 0},
         actual_metrics={"file_reads": 4},
+        codex_home=tmp_path,
     )
     assert result.evidence_for_task()["j3"]["experience_adaptation"] == "Applied"
     assert result.evidence_for_task()["j3"]["adapted_fields"] == ["validation.full_suite"]
@@ -121,7 +122,7 @@ def test_eligible_advice_and_metrics_are_correlated_once(tmp_path) -> None:
     assert "capsule" not in rows[0]
 
 
-def test_j2_failure_keeps_existing_behavior_and_does_not_invent_policy() -> None:
+def test_j2_failure_keeps_existing_behavior_and_does_not_invent_policy(tmp_path) -> None:
     result = prepare_formal_task_jit(
         TASK_ID,
         context=TaskPolicyContext(
@@ -134,6 +135,7 @@ def test_j2_failure_keeps_existing_behavior_and_does_not_invent_policy() -> None
                 )
             },
         ),
+        codex_home=tmp_path,
     )
     assert result.compiler_result.valid is False
     assert result.compiler_result.fallback is True
@@ -146,7 +148,7 @@ def test_j2_failure_keeps_existing_behavior_and_does_not_invent_policy() -> None
     assert result.consume_for_execution(lambda activation: activation) is None
 
 
-def test_pipeline_does_not_recompile_per_execution_callback() -> None:
+def test_pipeline_does_not_recompile_per_execution_callback(tmp_path) -> None:
     calls = []
     original_compile = jit_pipeline.compile_task_policy
 
@@ -156,7 +158,7 @@ def test_pipeline_does_not_recompile_per_execution_callback() -> None:
 
     jit_pipeline.compile_task_policy = compile_wrapper
     try:
-        result = prepare_formal_task_jit(TASK_ID, context=_context())
+        result = prepare_formal_task_jit(TASK_ID, context=_context(), codex_home=tmp_path)
         result.consume_for_execution(lambda activation: activation)
         result.consume_for_execution(lambda activation: activation)
     finally:

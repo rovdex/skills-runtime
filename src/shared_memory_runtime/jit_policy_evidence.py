@@ -217,6 +217,11 @@ def _j3_evidence(
         )
         if not isinstance(source_ids, list):
             source_ids = []
+        skill_ids = _ordered_string_sequence(
+            getattr(adaptation_result, "source_skill_ids", ())
+        )
+        if not isinstance(skill_ids, list):
+            skill_ids = []
         changed_fields = list(_changed_advice_fields(adaptation_result))
         adapted = getattr(adaptation_result, "adapted", _MISSING)
         if "advice_winner_ambiguous" in reason_codes:
@@ -257,6 +262,9 @@ def _j3_evidence(
                 "adapted_fields": changed_fields,
                 "experience_conflicts": conflict_count,
                 "experience_policy_sources": source_ids,
+                "knowledge_adaptation": "Verified Skill" if skill_ids else ("Experience" if source_ids else "None"),
+                "verified_skill_advice": len(skill_ids),
+                "verified_skill_policy_sources": skill_ids,
             }
         )
     elif precedence == "not_run":
@@ -269,6 +277,9 @@ def _j3_evidence(
                 "adapted_fields": _UNKNOWN,
                 "experience_conflicts": _UNKNOWN,
                 "experience_policy_sources": _UNKNOWN,
+                "knowledge_adaptation": _UNKNOWN,
+                "verified_skill_advice": _UNKNOWN,
+                "verified_skill_policy_sources": _UNKNOWN,
             }
         )
     else:
@@ -281,6 +292,9 @@ def _j3_evidence(
                 "adapted_fields": _UNKNOWN,
                 "experience_conflicts": _UNKNOWN,
                 "experience_policy_sources": _UNKNOWN,
+                "knowledge_adaptation": _UNKNOWN,
+                "verified_skill_advice": _UNKNOWN,
+                "verified_skill_policy_sources": _UNKNOWN,
             }
         )
     return result

@@ -22,7 +22,7 @@ from .jit_invocation_evidence import (
     persist_jit_invocation_evidence,
 )
 from .policy_activation import PolicyActivationResult, activate_task_policy
-from .policy_adaptation import PolicyAdaptationResult, adapt_task_policy
+from .policy_adaptation import PolicyAdaptationResult, SkillAdvice, adapt_task_policy
 from .recall import RecallCandidate
 from .task_policy import PolicyCompileResult, TaskPolicyContext, compile_task_policy
 
@@ -158,6 +158,7 @@ def prepare_formal_task_jit(
     advice_by_experience: Optional[
         Mapping[str, Optional[Mapping[str, object]]]
     ] = None,
+    verified_skill_advice: Sequence[SkillAdvice] = (),
     skill_requirements: Optional[Mapping[str, object]] = None,
     project_requirements: Optional[Mapping[str, object]] = None,
     user_requirements: Optional[Mapping[str, object]] = None,
@@ -210,6 +211,7 @@ def prepare_formal_task_jit(
         tuple(ranked_candidates),
         advice_by_experience or {},
         available_skills=context.available_skills,
+        verified_skill_advice=verified_skill_advice,
     )
     activation_result = activate_task_policy(
         adaptation_result.policy,

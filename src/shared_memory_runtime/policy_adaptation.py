@@ -29,6 +29,17 @@ class PolicyAdviceProvenance:
     final_value: object
     source_experience_id: str
     reason: str
+    source_kind: str = "experience"
+
+
+@dataclass(frozen=True)
+class SkillAdvice:
+    """Allowlisted advice from an already-ranked, Verified portable Skill."""
+
+    skill_id: str
+    status: str
+    fields: Mapping[str, object]
+    applicability_passed: bool = True
 
 
 @dataclass(frozen=True)
@@ -38,6 +49,7 @@ class PolicyAdaptationResult:
     source_experience_ids: Tuple[str, ...] = ()
     reason_codes: Tuple[str, ...] = ()
     provenance: Tuple[PolicyAdviceProvenance, ...] = ()
+    source_skill_ids: Tuple[str, ...] = ()
 
 
 def _flatten_paths(value: Mapping[str, object], prefix: str = "") -> Iterable[Tuple[str, object]]:
@@ -130,16 +142,65 @@ def adapt_task_policy(
     advice_by_experience: Mapping[str, Optional[Mapping[str, object]]],
     *,
     available_skills: Sequence[str] = (),
+    verified_skill_advice: Sequence[SkillAdvice] = (),
 ) -> PolicyAdaptationResult:
-    """Apply only the first unique advice value in authoritative rank order.
+    """Apply Verified Skill advice first, then ranked Experience advice.
 
-    This function deliberately does not sort, score, inspect anchors, or
-    compare project applicability.  ``ranked_candidates`` is already the
-    result of the Runtime's authoritative Recall ranking.
+    Portable Recall owns Skill ranking and applicability. This function only
+    consumes that order: Candidate Skills are guidance-only and are skipped;
+    an applicable Verified Skill is allowed to adapt the J3 allowlist. If no
+    applicable Verified Skill advice exists, the legacy Experience advice
+    path is used unchanged.
     """
 
+    skill_reasons = []
+    eligible_skills = []
+    for advice in verified_skill_advice:
+        if not isinstance(advice, SkillAdvice):
+            skill_reasons.append("skill_advice_invalid")
+            continue
+        if advice.status != "verified" or not advice.applicability_passed:
+            continue
+        validation = validate_policy_advice(advice.fields, available_skills=available_skills)
+        if not validation.valid:
+            skill_reasons.extend(validation.reason_codes)
+            continue
+        eligible_skills.append(advice)
+
+    if eligible_skills:
+        winner = eligible_skills[0]
+        adapted = deepcopy(dict(base_policy))
+        provenance = []
+        for path, value in _flatten_paths(winner.fields):
+            base_value = _get_path(adapted, path)
+            _set_path(adapted, path, value)
+            provenance.append(
+                PolicyAdviceProvenance(
+                    field=path,
+                    base_value=base_value,
+                    final_value=value,
+                    source_experience_id="",
+                    reason="authoritative_verified_skill_recall",
+                    source_kind="verified_skill",
+                )
+            )
+        final_validation = validate_task_policy(adapted, available_skills=available_skills)
+        if not final_validation.valid:
+            return PolicyAdaptationResult(
+                base_policy,
+                False,
+                reason_codes=("adapted_policy_invalid",) + final_validation.reason_codes,
+            )
+        return PolicyAdaptationResult(
+            policy=adapted,
+            adapted=any(item.base_value != item.final_value for item in provenance),
+            reason_codes=tuple(sorted(set(skill_reasons))),
+            provenance=tuple(provenance),
+            source_skill_ids=(winner.skill_id,),
+        )
+
     eligible = []
-    reasons = []
+    reasons = list(skill_reasons)
     for candidate in ranked_candidates:
         if (
             candidate.effective_experience_verification != "verified"
@@ -157,7 +218,11 @@ def adapt_task_policy(
         eligible.append((candidate, raw_advice))
 
     if not eligible:
-        return PolicyAdaptationResult(base_policy, False, reason_codes=tuple(sorted(set(reasons or ["no_eligible_advice"]))))
+        return PolicyAdaptationResult(
+            base_policy,
+            False,
+            reason_codes=tuple(sorted(set(reasons or ["no_eligible_advice"]))),
+        )
 
     winner, winner_advice = eligible[0]
     for other, other_advice in eligible[1:]:
@@ -204,6 +269,7 @@ __all__ = [
     "PolicyAdvice",
     "PolicyAdviceProvenance",
     "PolicyAdaptationResult",
+    "SkillAdvice",
     "adapt_task_policy",
     "validate_policy_advice",
 ]

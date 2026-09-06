@@ -33,6 +33,9 @@ class TaskMetrics:
     recall_ms: float = 0.0
     candidate_count: int = 0
     capsule_count: int = 0
+    full_skill_count: int = 0
+    experience_expansion_count: int = 0
+    approx_injected_knowledge_tokens: int = 0
     approx_memory_tokens: int = 0
     full_markdown_expansions: int = 0
     terminal_model_calls: int = 0
@@ -81,6 +84,9 @@ class TaskMetrics:
         for name in (
             "candidate_count",
             "capsule_count",
+            "full_skill_count",
+            "experience_expansion_count",
+            "approx_injected_knowledge_tokens",
             "approx_memory_tokens",
             "full_markdown_expansions",
             "terminal_model_calls",
@@ -142,6 +148,9 @@ class TaskMetrics:
             "recall_ms": float(self.recall_ms),
             "candidate_count": self.candidate_count,
             "capsule_count": self.capsule_count,
+            "full_skill_count": self.full_skill_count,
+            "experience_expansion_count": self.experience_expansion_count,
+            "approx_injected_knowledge_tokens": self.approx_injected_knowledge_tokens,
             "approx_memory_tokens": self.approx_memory_tokens,
             "full_markdown_expansions": self.full_markdown_expansions,
             "terminal_model_calls": self.terminal_model_calls,

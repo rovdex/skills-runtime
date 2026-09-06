@@ -16,6 +16,20 @@ The package provides:
 - one deterministic `compile_terminal_experience()` operation for NEW /
   REINFORCE / CORRECT classification.
 
+Portable Knowledge reference APIs read `<CODEX_HOME>/skills/.knowledge` directly:
+
+- `recall_skills()` implements the authoritative Skill-first, Capsule-first
+  Recall path with explicit Full Skill expansion and Experience fallback;
+- `validate_knowledge_tree()` checks index/Markdown/evidence parity; and
+- `skill_evolution_check()` computes only the frozen evolution decisions from
+  Shared Knowledge evidence.
+
+These APIs are optional accelerators and validators. Portable Recall remains
+complete with Agent-native filesystem, Git, Markdown, YAML, and JSONL tools
+when this Runtime, SQLite, or a Python helper is absent. Candidate Skill
+guidance never changes J3; only Verified Skill advice is eligible for the
+allowlisted Knowledge Adaptation path.
+
 It also provides a read-only Finalization Receipt check for the Final Summary
 gate. From the Runtime checkout, run:
 
